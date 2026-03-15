@@ -1,0 +1,6 @@
+name = "ops"
+description = "Basic ops commands"
+triggers = ["deploy", "build", "ops"]
+system_prompt = "Keep answers short. If a tool is needed, request explicitly."
+allowed_tools = ["shell", "tmux", "http"]
+allowed_commands = ["git", "cargo", "rg"]

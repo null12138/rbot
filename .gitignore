@@ -1,0 +1,16 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Local config & secrets
+/config/config.toml
+*.env
+
+# Runtime data
+/data/
+/memory/
+/sleep/
+/session_memory.md
+
+# OS
+.DS_Store
