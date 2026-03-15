@@ -27,7 +27,7 @@ allow_all = false
 allowlist = ["new-session", "list-sessions", "kill-session", "capture-pane", "send-keys"]
 
 [tools.http]
-allow_all = false
+allow_all = true
 allowed_domains = ["api.github.com", "api.openai.com"]
 
 [security]

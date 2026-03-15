@@ -4,12 +4,12 @@ use serde::Deserialize;
 use crate::memory::{local_day_string, MemoryStore, StoredMessage};
 use crate::scheduler::{ScheduledAction, Scheduler};
 use crate::skills::SkillManager;
-use crate::tools::{tmux::TmuxAction, ToolCall, ToolRegistry};
+use crate::tools::{tmux::TmuxAction, ToolCall, ToolError, ToolRegistry};
 use chrono::Local;
 use std::sync::Arc;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode};
+use teloxide::types::ParseMode;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -61,9 +61,8 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     };
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
-        bot.send_message(msg.chat.id, escape_html("菜单"))
+        bot.send_message(msg.chat.id, escape_html("RBot 已就绪。直接提问或输入命令。"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
@@ -86,7 +85,6 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     if text.eq_ignore_ascii_case("取消") || text.eq_ignore_ascii_case("Cancel") {
         bot.send_message(msg.chat.id, escape_html("已取消"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
@@ -190,7 +188,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     if text.starts_with("!shell ") {
         let cmd = text.trim_start_matches("!shell ").to_string();
         let out = state.tools.execute(ToolCall::Shell { cmd }).await;
-        send_tool_output(&bot, msg.chat.id, out).await?;
+        send_tool_output(&bot, msg.chat.id, out, "shell").await?;
         return Ok(());
     }
 
@@ -206,7 +204,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         let url = parts[1].to_string();
         let body = parts.get(2).map(|s| s.to_string());
         let out = state.tools.execute(ToolCall::Http { method, url, body }).await;
-        send_tool_output(&bot, msg.chat.id, out).await?;
+        send_tool_output(&bot, msg.chat.id, out, "http").await?;
         return Ok(());
     }
 
@@ -214,7 +212,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         let cmd = text.trim_start_matches("!tmux ");
         let action = parse_tmux_action(cmd)?;
         let out = state.tools.execute(ToolCall::Tmux { action }).await;
-        send_tool_output(&bot, msg.chat.id, out).await?;
+        send_tool_output(&bot, msg.chat.id, out, "tmux").await?;
         return Ok(());
     }
 
@@ -236,13 +234,11 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     let send = bot
         .send_message(msg.chat.id, reply.clone())
         .parse_mode(ParseMode::Html)
-        .reply_markup(menu_keyboard())
         .await;
     if let Err(_) = send {
         let safe = escape_html(&reply);
         bot.send_message(msg.chat.id, safe)
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
     }
     Ok(())
@@ -254,12 +250,11 @@ async fn handle_command(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, 
         dialogue.update(DialogueState::Idle).await?;
         bot.send_message(msg.chat.id, escape_html("Cancelled"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
     let out = state.tools.execute(ToolCall::Shell { cmd: text.to_string() }).await;
-    send_tool_output(&bot, msg.chat.id, out).await?;
+    send_tool_output(&bot, msg.chat.id, out, "shell").await?;
     dialogue.update(DialogueState::Idle).await?;
     Ok(())
 }
@@ -270,7 +265,6 @@ async fn handle_http(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         dialogue.update(DialogueState::Idle).await?;
         bot.send_message(msg.chat.id, escape_html("Cancelled"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
@@ -285,7 +279,7 @@ async fn handle_http(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     let url = parts[1].to_string();
     let body = parts.get(2).map(|s| s.to_string());
     let out = state.tools.execute(ToolCall::Http { method, url, body }).await;
-    send_tool_output(&bot, msg.chat.id, out).await?;
+    send_tool_output(&bot, msg.chat.id, out, "http").await?;
     dialogue.update(DialogueState::Idle).await?;
     Ok(())
 }
@@ -296,13 +290,12 @@ async fn handle_tmux(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         dialogue.update(DialogueState::Idle).await?;
         bot.send_message(msg.chat.id, escape_html("Cancelled"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
     let action = parse_tmux_action(text)?;
     let out = state.tools.execute(ToolCall::Tmux { action }).await;
-    send_tool_output(&bot, msg.chat.id, out).await?;
+    send_tool_output(&bot, msg.chat.id, out, "tmux").await?;
     dialogue.update(DialogueState::Idle).await?;
     Ok(())
 }
@@ -313,7 +306,6 @@ async fn handle_schedule(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue,
         dialogue.update(DialogueState::Idle).await?;
         bot.send_message(msg.chat.id, escape_html("Cancelled"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
@@ -346,7 +338,6 @@ async fn handle_whitelist(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue
         dialogue.update(DialogueState::Idle).await?;
         bot.send_message(msg.chat.id, escape_html("Cancelled"))
             .parse_mode(ParseMode::Html)
-            .reply_markup(menu_keyboard())
             .await?;
         return Ok(());
     }
@@ -389,7 +380,7 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
     messages.push(LlmMessage {
         role: "system".into(),
         content: format!(
-            "Persona:\n{}\n\nRules:\n- You can use tools (shell/http/tmux) proactively to achieve the goal.\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Use official tool calls when tools are needed.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
+            "Persona:\n{}\n\nRules:\n- You can use tools (shell/http/tmux) proactively to achieve the goal.\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- For real-time or web data, attempt http tool calls; do not claim you cannot access the network unless a tool error explicitly says so.\n- If a tool call fails, surface the exact error and give a concrete config fix (e.g., enable tools.http.allow_all or add allowed_domains).\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Use official tool calls when tools are needed.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
             state.persona
         ),
         tool_call_id: None,
@@ -462,13 +453,16 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             });
             for call in reply.tool_calls {
                 let tool_result = match tool_call_from_llm(&call) {
-                    Ok(tool_call) => match state.tools.execute(tool_call).await {
-                        Ok(out) => format!(
-                            "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
-                            out.stdout, out.stderr, out.exit_code
-                        ),
-                        Err(err) => format!("TOOL_RESULT error: {}", err),
-                    },
+                    Ok(tool_call) => {
+                        let tool_name = tool_name(&tool_call);
+                        match state.tools.execute(tool_call).await {
+                            Ok(out) => format!(
+                                "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
+                                out.stdout, out.stderr, out.exit_code
+                            ),
+                            Err(err) => format_tool_error_plain(tool_name, &err),
+                        }
+                    }
                     Err(err) => format!("TOOL_RESULT error: {}", err),
                 };
                 state.memory.append_message(chat_id, "tool", &tool_result)?;
@@ -485,12 +479,13 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             continue;
         }
         if let Some(tool_call) = parse_tool_call(&reply.content)? {
+            let tool_name = tool_name(&tool_call);
             let tool_result = match state.tools.execute(tool_call).await {
                 Ok(out) => format!(
                     "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
                     out.stdout, out.stderr, out.exit_code
                 ),
-                Err(err) => format!("TOOL_RESULT error: {}", err),
+                Err(err) => format_tool_error_plain(tool_name, &err),
             };
             state.memory.append_message(chat_id, "tool", &tool_result)?;
             messages.push(LlmMessage {
@@ -534,15 +529,6 @@ fn to_llm_messages(messages: Vec<StoredMessage>) -> Vec<LlmMessage> {
             }
         })
         .collect()
-}
-
-fn menu_keyboard() -> KeyboardMarkup {
-    KeyboardMarkup::new(vec![
-        vec![KeyboardButton::new("对话"), KeyboardButton::new("命令"), KeyboardButton::new("网络")],
-        vec![KeyboardButton::new("任务"), KeyboardButton::new("定时"), KeyboardButton::new("记忆")],
-        vec![KeyboardButton::new("白名单"), KeyboardButton::new("技能"), KeyboardButton::new("取消")],
-    ])
-    .resize_keyboard(true)
 }
 
 fn parse_tmux_action(text: &str) -> anyhow::Result<TmuxAction> {
@@ -616,6 +602,7 @@ async fn send_tool_output(
     bot: &AutoSend<Bot>,
     chat_id: ChatId,
     out: Result<crate::tools::ToolOutput, crate::tools::ToolError>,
+    tool_name: &str,
 ) -> HandlerResult {
     match out {
         Ok(output) => {
@@ -625,7 +612,8 @@ async fn send_tool_output(
                 .await?;
         }
         Err(err) => {
-            bot.send_message(chat_id, escape_html(&format!("tool error: {}", err)))
+            let text = escape_html(&format_tool_error_plain(tool_name, &err));
+            bot.send_message(chat_id, text)
                 .parse_mode(ParseMode::Html)
                 .await?;
         }
@@ -651,6 +639,38 @@ fn format_tool_output_html(output: &crate::tools::ToolOutput) -> String {
     }
     parts.push(format!("<b>exit</b> {}", output.exit_code));
     parts.join("\n")
+}
+
+fn tool_name(call: &ToolCall) -> &'static str {
+    match call {
+        ToolCall::Shell { .. } => "shell",
+        ToolCall::Http { .. } => "http",
+        ToolCall::Tmux { .. } => "tmux",
+    }
+}
+
+fn format_tool_error_plain(tool: &str, err: &ToolError) -> String {
+    match err {
+        ToolError::NotAllowed => format!(
+            "TOOL_RESULT error: command not allowed. To enable, {}",
+            tool_enable_hint(tool)
+        ),
+        ToolError::Dangerous => {
+            "TOOL_RESULT error: dangerous command rejected. Check security.danger_patterns in config/config.toml."
+                .to_string()
+        }
+        ToolError::InvalidInput(msg) => format!("TOOL_RESULT error: invalid tool input: {}", msg),
+        ToolError::Execution(msg) => format!("TOOL_RESULT error: tool execution failed: {}", msg),
+    }
+}
+
+fn tool_enable_hint(tool: &str) -> &'static str {
+    match tool {
+        "http" => "set tools.http.allow_all = true OR add domain to tools.http.allowed_domains in config/config.toml.",
+        "shell" => "use /allow shell <command> OR set tools.shell.allow_all = true OR add to tools.shell.allowlist.",
+        "tmux" => "use /allow tmux <command> OR set tools.tmux.allow_all = true OR add to tools.tmux.allowlist.",
+        _ => "update tool allowlist in config/config.toml.",
+    }
 }
 
 fn escape_html(input: &str) -> String {

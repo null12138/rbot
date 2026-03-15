@@ -83,7 +83,7 @@ pub fn run() -> anyhow::Result<()> {
             },
             http: HttpToolConfig {
                 allowed_domains,
-                allow_all: false,
+                allow_all: true,
             },
         },
         security: SecurityConfig { danger_patterns },

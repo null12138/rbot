@@ -71,16 +71,6 @@ Edit `config/persona.md` to adjust the assistant's tone and constraints.
 - `/skill_off`: deactivate
 - `/allow <tool> <command>`: extend allowlist (admin only)
 
-## Menu
-- Chat
-- Run (shell)
-- HTTP
-- Tmux
-- Schedule
-- Memory
-- Whitelist
-- Skills
-
 ## Scheduling
 Input format (cron must start with `rbot_` or `rbot_system_`):
 ```
