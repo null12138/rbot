@@ -13,28 +13,28 @@ Minimal Rust bot with Telegram UI, tool calling, scheduling, LLM, tmux task mana
 ## Install / Update / Uninstall (one-liner)
 macOS / Linux / FreeBSD:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/install.sh | sh
+curl -fsSL https://github.com/null12138/rbot/releases/latest/download/install.sh | sh
 ```
 Update:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/update.sh | sh
+curl -fsSL https://github.com/null12138/rbot/releases/latest/download/update.sh | sh
 ```
 Uninstall:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/uninstall.sh | sh
+curl -fsSL https://github.com/null12138/rbot/releases/latest/download/uninstall.sh | sh
 ```
 
 Windows (PowerShell):
 ```powershell
-irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/install.ps1 | iex
+irm https://github.com/null12138/rbot/releases/latest/download/install.ps1 | iex
 ```
 Update:
 ```powershell
-irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/update.ps1 | iex
+irm https://github.com/null12138/rbot/releases/latest/download/update.ps1 | iex
 ```
 Uninstall:
 ```powershell
-irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/uninstall.ps1 | iex
+irm https://github.com/null12138/rbot/releases/latest/download/uninstall.ps1 | iex
 ```
 
 The installer will download the latest release for your OS/arch, install it to `~/.rbot`, and run `rbot init` for guided configuration.
