@@ -62,6 +62,17 @@ Optional environment overrides:
 By default rbot runs without proxy. If Telegram API is unreachable and `network.proxy_url`
 is set (or `RBOT_PROXY` is provided), it will retry with the proxy automatically.
 
+## Web Search Tool
+RBot includes a built-in `search` tool for web queries. Configure it in `config/config.toml`:
+```
+[tools.search]
+provider = "brave"   # or "searxng"
+api_key = ""         # required for brave
+endpoint = ""        # required for searxng, optional for brave
+limit = 5
+```
+Once configured, you can ask the bot to search directly (it will use the tool).
+
 ## Persona
 Edit `config/persona.md` to adjust the assistant's tone and constraints.
 

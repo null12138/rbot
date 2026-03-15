@@ -1,4 +1,4 @@
-use crate::config::{Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, SchedulerConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig, TmuxToolConfig};
+use crate::config::{Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, SchedulerConfig, SearchToolConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig, TmuxToolConfig};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -14,6 +14,10 @@ pub fn run() -> anyhow::Result<()> {
     let sleep_time = prompt("Sleep time (HH:MM)", Some("02:30".into()))?;
     let timezone = prompt("Timezone", Some("Asia/Shanghai".into()))?;
     let heartbeat = prompt("Heartbeat interval secs", Some("60".into()))?;
+    let search_provider = prompt("Search provider (brave/searxng)", Some("brave".into()))?;
+    let search_api_key = prompt("Search api_key (optional)", Some("".into()))?;
+    let search_endpoint = prompt("Search endpoint (optional)", Some("".into()))?;
+    let search_limit = prompt("Search result limit", Some("5".into()))?;
 
     let allowlist_shell = vec!["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
         .into_iter()
@@ -84,6 +88,20 @@ pub fn run() -> anyhow::Result<()> {
             http: HttpToolConfig {
                 allowed_domains,
                 allow_all: true,
+            },
+            search: SearchToolConfig {
+                provider: search_provider,
+                api_key: if search_api_key.trim().is_empty() {
+                    None
+                } else {
+                    Some(search_api_key)
+                },
+                endpoint: if search_endpoint.trim().is_empty() {
+                    None
+                } else {
+                    Some(search_endpoint)
+                },
+                limit: search_limit.parse().unwrap_or(5),
             },
         },
         security: SecurityConfig { danger_patterns },

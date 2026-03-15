@@ -251,6 +251,21 @@ fn default_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             kind: "function".to_string(),
             function: ToolSpec {
+                name: "search".to_string(),
+                description: "Search the web and return top results.".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "count": {"type": "integer"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+        },
+        ToolDefinition {
+            kind: "function".to_string(),
+            function: ToolSpec {
                 name: "tmux".to_string(),
                 description: "Control tmux: start/stop/logs/list.".to_string(),
                 parameters: json!({

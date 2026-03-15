@@ -645,6 +645,7 @@ fn tool_name(call: &ToolCall) -> &'static str {
     match call {
         ToolCall::Shell { .. } => "shell",
         ToolCall::Http { .. } => "http",
+        ToolCall::Search { .. } => "search",
         ToolCall::Tmux { .. } => "tmux",
     }
 }
@@ -669,6 +670,7 @@ fn tool_enable_hint(tool: &str) -> &'static str {
         "http" => "set tools.http.allow_all = true OR add domain to tools.http.allowed_domains in config/config.toml.",
         "shell" => "use /allow shell <command> OR set tools.shell.allow_all = true OR add to tools.shell.allowlist.",
         "tmux" => "use /allow tmux <command> OR set tools.tmux.allow_all = true OR add to tools.tmux.allowlist.",
+        "search" => "set tools.search.provider + api_key/endpoint in config/config.toml (e.g. brave requires api_key; searxng requires endpoint).",
         _ => "update tool allowlist in config/config.toml.",
     }
 }
@@ -760,6 +762,18 @@ fn tool_call_from_llm(call: &LlmToolCall) -> anyhow::Result<ToolCall> {
                 method: parsed.method,
                 url: parsed.url,
                 body,
+            })
+        }
+        "search" => {
+            #[derive(Deserialize)]
+            struct SearchArgs {
+                query: String,
+                count: Option<usize>,
+            }
+            let parsed: SearchArgs = serde_json::from_str(args)?;
+            Ok(ToolCall::Search {
+                query: parsed.query,
+                count: parsed.count,
             })
         }
         "tmux" => {

@@ -30,6 +30,16 @@ allowlist = ["new-session", "list-sessions", "kill-session", "capture-pane", "se
 allow_all = true
 allowed_domains = ["api.github.com", "api.openai.com"]
 
+[tools.search]
+# provider: "brave" or "searxng"
+provider = "brave"
+# brave requires api_key; searxng can be public/self-hosted
+api_key = ""
+# optional override endpoint
+endpoint = ""
+# default result limit
+limit = 5
+
 [security]
 # regex patterns; if matched, block execution
 # keep minimal and extend as needed

@@ -51,6 +51,8 @@ pub struct ToolsConfig {
     pub shell: ShellToolConfig,
     pub tmux: TmuxToolConfig,
     pub http: HttpToolConfig,
+    #[serde(default)]
+    pub search: SearchToolConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +78,26 @@ pub struct HttpToolConfig {
     pub allowed_domains: Vec<String>,
     #[serde(default)]
     pub allow_all: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchToolConfig {
+    #[serde(default = "default_search_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_provider() -> String {
+    "brave".to_string()
+}
+
+fn default_search_limit() -> usize {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

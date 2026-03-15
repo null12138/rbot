@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 pub mod http;
+pub mod search;
 pub mod shell;
 pub mod tmux;
 
@@ -12,6 +13,7 @@ pub mod tmux;
 pub enum ToolCall {
     Shell { cmd: String },
     Http { method: String, url: String, body: Option<String> },
+    Search { query: String, count: Option<usize> },
     Tmux { action: tmux::TmuxAction },
 }
 
@@ -64,6 +66,10 @@ pub struct ToolRegistry {
     pub tmux_allowlist: Arc<RwLock<HashSet<String>>>,
     pub http_allowed_domains: Arc<RwLock<HashSet<String>>>,
     pub http_proxy: Option<String>,
+    pub search_provider: String,
+    pub search_api_key: Option<String>,
+    pub search_endpoint: Option<String>,
+    pub search_limit: usize,
     pub shell_allow_all: bool,
     pub shell_allow_meta: bool,
     pub shell_use_shell: bool,
@@ -79,6 +85,10 @@ impl ToolRegistry {
         tmux_allowlist: Vec<String>,
         http_allowed_domains: Vec<String>,
         http_proxy: Option<String>,
+        search_provider: String,
+        search_api_key: Option<String>,
+        search_endpoint: Option<String>,
+        search_limit: usize,
         shell_allow_all: bool,
         shell_allow_meta: bool,
         shell_use_shell: bool,
@@ -103,6 +113,10 @@ impl ToolRegistry {
             tmux_allowlist: Arc::new(RwLock::new(tmux)),
             http_allowed_domains: Arc::new(RwLock::new(http)),
             http_proxy,
+            search_provider,
+            search_api_key,
+            search_endpoint,
+            search_limit,
             shell_allow_all,
             shell_allow_meta,
             shell_use_shell,
@@ -132,6 +146,9 @@ impl ToolRegistry {
             ToolCall::Shell { cmd } => shell::execute_shell(cmd, self).await,
             ToolCall::Http { method, url, body } => {
                 http::execute_http(&method, &url, body, self).await
+            }
+            ToolCall::Search { query, count } => {
+                search::execute_search(query, count, self).await
             }
             ToolCall::Tmux { action } => tmux::execute_tmux(action, self).await,
         }
