@@ -10,15 +10,31 @@ Minimal Rust bot with Telegram UI, tool calling, scheduling, LLM, tmux task mana
 - Three-layer memory: short-term (recent turns), mid-term (daily summaries), long-term (MEMORY.md + SQLite).
 - Skills: load `skills/*.toml` and activate via `/skill <name>`.
 
-## Install (one-liner)
+## Install / Update / Uninstall (one-liner)
 macOS / Linux / FreeBSD:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/install.sh | sh
+```
+Update:
+```sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/update.sh | sh
+```
+Uninstall:
+```sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/uninstall.sh | sh
 ```
 
 Windows (PowerShell):
 ```powershell
 irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/install.ps1 | iex
+```
+Update:
+```powershell
+irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/update.ps1 | iex
+```
+Uninstall:
+```powershell
+irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/uninstall.ps1 | iex
 ```
 
 The installer will download the latest release for your OS/arch, install it to `~/.rbot`, and run `rbot init` for guided configuration.
@@ -31,6 +47,7 @@ Optional environment overrides:
 - `RBOT_VERSION` (e.g. `v0.1.0`)
 - `RBOT_HOME` (default `~/.rbot`)
 - `RBOT_BIN_DIR` (default `~/.local/bin` on Unix, `%LOCALAPPDATA%\\rbot\\bin` on Windows)
+- `RBOT_KEEP_CONFIG` (set to keep config/data when uninstalling)
 
 ## Build From Source
 1. Run config wizard:
