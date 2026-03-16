@@ -994,8 +994,8 @@ impl StreamEditor {
             // Allow the first partial update to land immediately.
             last_edit: now - Duration::from_millis(900),
             last_len: 0,
-            min_interval: Duration::from_millis(350),
-            min_chars: 24,
+            min_interval: Duration::from_millis(800),
+            min_chars: 60,
             last_typing: now,
             backoff_until: None,
             progress: ctx.progress.clone(),
@@ -1035,19 +1035,19 @@ impl StreamEditor {
         let delta = content.len().saturating_sub(self.last_len);
         let elapsed = now.duration_since(self.created_at);
         let burst_interval = if elapsed < Duration::from_secs(2) {
-            Duration::from_millis(200)
+            Duration::from_millis(500)
         } else if elapsed < Duration::from_secs(5) {
-            Duration::from_millis(350)
+            Duration::from_millis(800)
         } else {
             self.min_interval
         };
         let interval = self.min_interval.max(burst_interval);
         let min_chars = if elapsed < Duration::from_secs(2) {
-            8
+            40
         } else if elapsed < Duration::from_secs(5) {
-            16
+            60
         } else if content.len() < 200 {
-            16
+            40
         } else {
             self.min_chars
         };
@@ -1069,7 +1069,7 @@ impl StreamEditor {
                 self.last_edit = now;
                 self.last_len = content.len();
                 let dec = Duration::from_millis(50);
-                let floor = Duration::from_millis(350);
+                let floor = Duration::from_millis(700);
                 self.min_interval = self.min_interval.saturating_sub(dec).max(floor);
             }
             Err(err) => {
@@ -1080,7 +1080,7 @@ impl StreamEditor {
                 } else if matches!(err, RequestError::Api(ApiError::MessageNotModified)) {
                     self.last_edit = now;
                 } else {
-                    self.min_interval = Duration::from_millis(1200);
+                    self.min_interval = Duration::from_millis(1500);
                 }
             }
         }
