@@ -13,7 +13,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, MessageId, ParseMode};
+use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use reqwest::{Client, Proxy};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
@@ -50,6 +50,9 @@ enum ChatResult {
     Reply(String),
     ToolLimit { max: usize, suggested: usize },
 }
+
+const CALLBACK_YES: &str = "rbot_yes";
+const CALLBACK_NO: &str = "rbot_no";
 
 #[derive(Clone)]
 struct StreamContext {
@@ -89,14 +92,18 @@ type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 pub async fn run_bot(bot: AutoSend<Bot>, state: AppState) {
     let storage = InMemStorage::<DialogueState>::new();
-    let handler = Update::filter_message()
-        .enter_dialogue::<Message, InMemStorage<DialogueState>, DialogueState>()
-        .branch(dptree::case![DialogueState::Idle].endpoint(handle_idle))
-        .branch(dptree::case![DialogueState::AwaitingCommand].endpoint(handle_command))
-        .branch(dptree::case![DialogueState::AwaitingHttp].endpoint(handle_http))
-        .branch(dptree::case![DialogueState::AwaitingTmux].endpoint(handle_tmux))
-        .branch(dptree::case![DialogueState::AwaitingSchedule].endpoint(handle_schedule))
-        .branch(dptree::case![DialogueState::AwaitingWhitelist].endpoint(handle_whitelist));
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .enter_dialogue::<Message, InMemStorage<DialogueState>, DialogueState>()
+                .branch(dptree::case![DialogueState::Idle].endpoint(handle_idle))
+                .branch(dptree::case![DialogueState::AwaitingCommand].endpoint(handle_command))
+                .branch(dptree::case![DialogueState::AwaitingHttp].endpoint(handle_http))
+                .branch(dptree::case![DialogueState::AwaitingTmux].endpoint(handle_tmux))
+                .branch(dptree::case![DialogueState::AwaitingSchedule].endpoint(handle_schedule))
+                .branch(dptree::case![DialogueState::AwaitingWhitelist].endpoint(handle_whitelist)),
+        )
+        .branch(Update::filter_callback_query().endpoint(handle_callback));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![state, storage])
@@ -369,6 +376,149 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     Ok(())
 }
 
+async fn handle_callback(bot: AutoSend<Bot>, q: CallbackQuery, state: AppState) -> HandlerResult {
+    let data = match q.data.as_deref() {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+    if data != CALLBACK_YES && data != CALLBACK_NO {
+        return Ok(());
+    }
+    let _ = bot.answer_callback_query(q.id).await;
+    let (chat_id, message_id) = match &q.message {
+        Some(msg) => (msg.chat.id, msg.id),
+        None => return Ok(()),
+    };
+    let chat_id_i64 = chat_id.0;
+    let _ = bot
+        .edit_message_reply_markup(chat_id, message_id)
+        .reply_markup(InlineKeyboardMarkup::default())
+        .await;
+
+    let text = if data == CALLBACK_YES { "是" } else { "否" };
+
+    let pending = {
+        let map = state.pending_tool_limit.lock().await;
+        map.get(&chat_id_i64).cloned()
+    };
+    if let Some(pending) = pending {
+        if is_confirm(text) {
+            {
+                let mut map = state.pending_tool_limit.lock().await;
+                map.remove(&chat_id_i64);
+            }
+            let progress = start_progress(&bot, chat_id).await;
+            let message_id = progress.as_ref().map(|p| p.message_id);
+            let progress_state = Arc::new(Mutex::new(progress));
+            let stream_ctx = StreamContext {
+                bot: bot.clone(),
+                chat_id,
+                message_id,
+                progress: progress_state.clone(),
+            };
+            let response = chat_with_timeout(
+                &state,
+                chat_id_i64,
+                &pending.input,
+                Some(pending.max_tool_calls),
+                Some(stream_ctx),
+            )
+            .await;
+            match response {
+                Ok(ChatResult::Reply(reply)) => {
+                    state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false)
+                        .await?;
+                }
+                Ok(ChatResult::ToolLimit { max, suggested }) => {
+                    {
+                        let mut map = state.pending_tool_limit.lock().await;
+                        map.insert(
+                            chat_id_i64,
+                            PendingToolLimit {
+                                input: pending.input,
+                                max_tool_calls: suggested,
+                            },
+                        );
+                    }
+                    let prompt = format!(
+                        "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
+                        max, suggested
+                    );
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false)
+                        .await?;
+                }
+                Err(err) => {
+                    let reply = format!("llm error: {}", err);
+                    state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false)
+                        .await?;
+                }
+            }
+            return Ok(());
+        }
+        if is_reject(text) {
+            {
+                let mut map = state.pending_tool_limit.lock().await;
+                map.remove(&chat_id_i64);
+            }
+            send_text(&bot, chat_id, "已取消").await?;
+            return Ok(());
+        }
+        {
+            let mut map = state.pending_tool_limit.lock().await;
+            map.remove(&chat_id_i64);
+        }
+    }
+
+    state.memory.append_message(chat_id_i64, "user", text)?;
+    let progress = start_progress(&bot, chat_id).await;
+    let message_id = progress.as_ref().map(|p| p.message_id);
+    let progress_state = Arc::new(Mutex::new(progress));
+    let stream_ctx = StreamContext {
+        bot: bot.clone(),
+        chat_id,
+        message_id,
+        progress: progress_state.clone(),
+    };
+    let response = chat_with_timeout(&state, chat_id_i64, text, None, Some(stream_ctx)).await;
+    match response {
+        Ok(ChatResult::Reply(reply)) => {
+            state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+        }
+        Ok(ChatResult::ToolLimit { max, suggested }) => {
+            {
+                let mut map = state.pending_tool_limit.lock().await;
+                map.insert(
+                    chat_id_i64,
+                    PendingToolLimit {
+                        input: text.to_string(),
+                        max_tool_calls: suggested,
+                    },
+                );
+            }
+            let prompt = format!(
+                "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
+                max, suggested
+            );
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
+        }
+        Err(err) => {
+            let reply = format!("llm error: {}", err);
+            state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn handle_command(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, state: AppState) -> HandlerResult {
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
@@ -555,6 +705,7 @@ async fn send_reply_with_progress(
     message_id: Option<MessageId>,
     stream: bool,
 ) -> HandlerResult {
+    let markup = yes_no_markup(reply);
     if let Some(handle) = progress {
         let ProgressHandle { stop, join, message_id } = handle;
         let _ = stop.send(());
@@ -562,24 +713,28 @@ async fn send_reply_with_progress(
         let _ = time::timeout(Duration::from_millis(200), join).await;
         time::sleep(Duration::from_millis(40)).await;
         let mut delivered = false;
-        if stream && should_stream(reply) {
+        if stream && should_stream(reply) && markup.is_none() {
             delivered = stream_edit_message(bot, chat_id, message_id, reply).await;
         }
         if !delivered {
-            if bot
+            let mut req = bot
                 .edit_message_text(chat_id, message_id, reply.to_string())
-                .parse_mode(ParseMode::Html)
-                .await
-                .is_ok()
-            {
+                .parse_mode(ParseMode::Html);
+            if let Some(m) = markup.clone() {
+                req = req.reply_markup(m);
+            }
+            if req.await.is_ok() {
                 delivered = true;
             }
         }
         if !delivered {
-            let send = bot
+            let mut req = bot
                 .send_message(chat_id, reply.to_string())
-                .parse_mode(ParseMode::Html)
-                .await;
+                .parse_mode(ParseMode::Html);
+            if let Some(m) = markup.clone() {
+                req = req.reply_markup(m);
+            }
+            let send = req.await;
             if send.is_err() {
                 let safe = escape_html(reply);
                 bot.send_message(chat_id, safe)
@@ -591,28 +746,33 @@ async fn send_reply_with_progress(
         return Ok(());
     }
     if let Some(message_id) = message_id {
-        if bot
+        let mut req = bot
             .edit_message_text(chat_id, message_id, reply.to_string())
-            .parse_mode(ParseMode::Html)
-            .await
-            .is_ok()
-        {
+            .parse_mode(ParseMode::Html);
+        if let Some(m) = markup.clone() {
+            req = req.reply_markup(m);
+        }
+        if req.await.is_ok() {
             return Ok(());
         }
         let safe = escape_html(reply);
-        if bot
+        let mut req = bot
             .edit_message_text(chat_id, message_id, safe)
-            .parse_mode(ParseMode::Html)
-            .await
-            .is_ok()
-        {
+            .parse_mode(ParseMode::Html);
+        if let Some(m) = markup.clone() {
+            req = req.reply_markup(m);
+        }
+        if req.await.is_ok() {
             return Ok(());
         }
     }
-    let send = bot
+    let mut req = bot
         .send_message(chat_id, reply.to_string())
-        .parse_mode(ParseMode::Html)
-        .await;
+        .parse_mode(ParseMode::Html);
+    if let Some(m) = markup {
+        req = req.reply_markup(m);
+    }
+    let send = req.await;
     if send.is_err() {
         let safe = escape_html(reply);
         bot.send_message(chat_id, safe)
@@ -620,6 +780,17 @@ async fn send_reply_with_progress(
             .await?;
     }
     Ok(())
+}
+
+fn yes_no_markup(text: &str) -> Option<InlineKeyboardMarkup> {
+    if !text.contains("如果你要") {
+        return None;
+    }
+    let row = vec![
+        InlineKeyboardButton::callback("是", CALLBACK_YES),
+        InlineKeyboardButton::callback("否", CALLBACK_NO),
+    ];
+    Some(InlineKeyboardMarkup::new(vec![row]))
 }
 
 async fn stream_edit_message(
