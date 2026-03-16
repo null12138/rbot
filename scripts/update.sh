@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -e
 
-REPO="null12138/rbot"
+REPO="${RBOT_REPO:-null12138/rbot}"
 VERSION="${RBOT_VERSION:-latest}"
 RBOT_HOME="${RBOT_HOME:-$HOME/.rbot}"
 BIN_DIR="${RBOT_BIN_DIR:-}"
@@ -74,10 +74,7 @@ case "$OS" in
     ;;
  esac
 
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-if [ "$VERSION" != "latest" ]; then
-  API_URL="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
-fi
+API_URL="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
 
 json="$(fetch_json "$API_URL")"
 asset="rbot-${TARGET}.tar.gz"

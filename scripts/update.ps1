@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "null12138/rbot"
+$Repo = if ($env:RBOT_REPO) { $env:RBOT_REPO } else { "null12138/rbot" }
 $Version = if ($env:RBOT_VERSION) { $env:RBOT_VERSION } else { "latest" }
 $RbotHome = if ($env:RBOT_HOME) { $env:RBOT_HOME } else { Join-Path $env:USERPROFILE ".rbot" }
 $BinDir = if ($env:RBOT_BIN_DIR) { $env:RBOT_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "rbot\bin" }
@@ -15,11 +15,7 @@ switch ($arch) {
   default { throw "unsupported arch: $arch" }
 }
 
-if ($Version -eq "latest") {
-  $apiUrl = "https://api.github.com/repos/$Repo/releases/latest"
-} else {
-  $apiUrl = "https://api.github.com/repos/$Repo/releases/tags/$Version"
-}
+$apiUrl = "https://api.github.com/repos/$Repo/releases/tags/$Version"
 
 $release = Invoke-RestMethod -Uri $apiUrl -Headers @{"User-Agent"="rbot-install"}
 $assetName = "rbot-$target.zip"

@@ -35,6 +35,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -95,6 +97,11 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Update latest tag
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
       - name: Add installer scripts
         run: |
           cp scripts/install.sh dist/install.sh
@@ -103,6 +110,10 @@ jobs:
           cp scripts/install.ps1 dist/install.ps1
           cp scripts/update.ps1 dist/update.ps1
           cp scripts/uninstall.ps1 dist/uninstall.ps1
+          cp scripts/rbot.sh dist/rbot.sh
+          cp scripts/rbot.ps1 dist/rbot.ps1
+          cp scripts/rbot.sh dist/rbot.sh
+          cp scripts/rbot.ps1 dist/rbot.ps1
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -141,5 +152,5 @@ jobs:
           tag_name: latest
           name: latest
           target_commitish: ${{ github.sha }}
-          prerelease: true
+          prerelease: false
           files: dist/*
