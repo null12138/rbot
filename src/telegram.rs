@@ -63,6 +63,8 @@ struct StreamEditor {
     last_edit: Instant,
     last_len: usize,
     min_interval: Duration,
+    min_chars: usize,
+    last_typing: Instant,
     progress: Arc<Mutex<Option<ProgressHandle>>>,
     stopped: bool,
 }
@@ -763,7 +765,9 @@ impl StreamEditor {
             message_id,
             last_edit: Instant::now(),
             last_len: 0,
-            min_interval: Duration::from_millis(450),
+            min_interval: Duration::from_millis(700),
+            min_chars: 80,
+            last_typing: Instant::now(),
             progress: ctx.progress.clone(),
             stopped: false,
         })
@@ -788,8 +792,13 @@ impl StreamEditor {
         }
         self.stop_progress().await;
         let now = Instant::now();
+        if now.duration_since(self.last_typing) >= Duration::from_secs(4) {
+            let _ = self.bot.send_chat_action(self.chat_id, ChatAction::Typing).await;
+            self.last_typing = now;
+        }
+        let delta = content.len().saturating_sub(self.last_len);
         if now.duration_since(self.last_edit) < self.min_interval
-            && content.len().saturating_sub(self.last_len) < 24
+            && delta < self.min_chars
         {
             return;
         }
@@ -798,13 +807,21 @@ impl StreamEditor {
             safe.truncate(3800);
             safe.push_str("…");
         }
-        let _ = self
+        let result = self
             .bot
             .edit_message_text(self.chat_id, self.message_id, safe)
             .parse_mode(ParseMode::Html)
             .await;
-        self.last_edit = now;
-        self.last_len = content.len();
+        match result {
+            Ok(_) => {
+                self.last_edit = now;
+                self.last_len = content.len();
+                self.min_interval = Duration::from_millis(700);
+            }
+            Err(_) => {
+                self.min_interval = Duration::from_millis(1400);
+            }
+        }
     }
 }
 
