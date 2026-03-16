@@ -750,15 +750,17 @@ impl StreamEditor {
                 msg.id
             }
         };
+        let now = Instant::now();
         Ok(Self {
             bot: ctx.bot.clone(),
             chat_id: ctx.chat_id,
             message_id,
-            last_edit: Instant::now(),
+            // Allow the first partial update to land immediately.
+            last_edit: now - Duration::from_millis(900),
             last_len: 0,
-            min_interval: Duration::from_millis(700),
-            min_chars: 80,
-            last_typing: Instant::now(),
+            min_interval: Duration::from_millis(350),
+            min_chars: 24,
+            last_typing: now,
             progress: ctx.progress.clone(),
             stopped: false,
         })
@@ -788,9 +790,8 @@ impl StreamEditor {
             self.last_typing = now;
         }
         let delta = content.len().saturating_sub(self.last_len);
-        if now.duration_since(self.last_edit) < self.min_interval
-            && delta < self.min_chars
-        {
+        let min_chars = if content.len() < 200 { 16 } else { self.min_chars };
+        if now.duration_since(self.last_edit) < self.min_interval && delta < min_chars {
             return;
         }
         let mut safe = escape_html(content);
@@ -807,10 +808,10 @@ impl StreamEditor {
             Ok(_) => {
                 self.last_edit = now;
                 self.last_len = content.len();
-                self.min_interval = Duration::from_millis(700);
+                self.min_interval = Duration::from_millis(450);
             }
             Err(_) => {
-                self.min_interval = Duration::from_millis(1400);
+                self.min_interval = Duration::from_millis(1000);
             }
         }
     }
