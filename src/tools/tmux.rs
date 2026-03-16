@@ -19,10 +19,7 @@ pub async fn execute_tmux(action: TmuxAction, registry: &ToolRegistry) -> Result
             validate_session(&session)?;
             let parts = split(&cmd).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
             let (program, args) = parts.split_first().ok_or_else(|| ToolError::InvalidInput("empty command".into()))?;
-            let allowed = registry.shell_allowlist.read().unwrap().contains(program);
-            if !allowed {
-                return Err(ToolError::NotAllowed);
-            }
+            shell::ensure_program_allowed(program, registry)?;
             let mut command = Command::new("tmux");
             command.args(["new-session", "-d", "-s", &session, program]);
             command.args(args);

@@ -19,10 +19,12 @@ sleep_time = "02:30"
 timezone = "Asia/Shanghai"
 
 [tools.shell]
-allow_all = false
+mode = "blocklist" # allowlist | blocklist
+allow_all = false  # ignored in blocklist mode
 allow_meta = false
 use_shell = false
 allowlist = ["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
+blocklist = ["rm", "sudo", "shutdown", "reboot", "mkfs", "dd"]
 
 [tools.tmux]
 allow_all = false

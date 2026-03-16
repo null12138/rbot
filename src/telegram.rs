@@ -1317,7 +1317,7 @@ fn format_tool_error_plain(tool: &str, err: &ToolError) -> String {
 fn tool_enable_hint(tool: &str) -> &'static str {
     match tool {
         "http" => "set tools.http.allow_all = true OR add domain to tools.http.allowed_domains in config/config.toml.",
-        "shell" => "use /allow shell <command> OR set tools.shell.allow_all = true OR add to tools.shell.allowlist.",
+        "shell" => "set tools.shell.mode = \"blocklist\" and update tools.shell.blocklist OR use /allow shell <command> with allowlist mode.",
         "tmux" => "use /allow tmux <command> OR set tools.tmux.allow_all = true OR add to tools.tmux.allowlist.",
         "search" => "set tools.search.api_key (Tavily) in config/config.toml; endpoint optional.",
         "pdf" => "ensure the PDF file path is accessible on disk.",

@@ -63,6 +63,10 @@ pub struct ToolsConfig {
 pub struct ShellToolConfig {
     pub allowlist: Vec<String>,
     #[serde(default)]
+    pub blocklist: Vec<String>,
+    #[serde(default = "default_shell_mode")]
+    pub mode: String,
+    #[serde(default)]
     pub allow_all: bool,
     #[serde(default)]
     pub allow_meta: bool,
@@ -100,6 +104,10 @@ fn default_search_limit() -> usize {
 
 fn default_max_tool_calls() -> usize {
     16
+}
+
+fn default_shell_mode() -> String {
+    "allowlist".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use crate::tools::{ToolError, ToolOutput, ToolRegistry};
+use crate::tools::{ShellMode, ToolError, ToolOutput, ToolRegistry};
 use shell_words::split;
 use tokio::process::Command;
 
@@ -31,22 +31,14 @@ pub async fn execute_shell(cmd: String, registry: &ToolRegistry) -> Result<ToolO
         args = rest.iter().map(|s| s.to_string()).collect();
     }
 
-    if !registry.shell_allow_all {
-        if use_shell {
-            let parts = split(&cmd).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
-            let (prog, _) = parts
-                .split_first()
-                .ok_or_else(|| ToolError::InvalidInput("empty command".into()))?;
-            let allowed = registry.shell_allowlist.read().unwrap().contains(prog);
-            if !allowed {
-                return Err(ToolError::NotAllowed);
-            }
-        } else {
-            let allowed = registry.shell_allowlist.read().unwrap().contains(&program);
-            if !allowed {
-                return Err(ToolError::NotAllowed);
-            }
-        }
+    if use_shell {
+        let parts = split(&cmd).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        let (prog, _) = parts
+            .split_first()
+            .ok_or_else(|| ToolError::InvalidInput("empty command".into()))?;
+        ensure_program_allowed(prog, registry)?;
+    } else {
+        ensure_program_allowed(&program, registry)?;
     }
 
     let output = if use_shell {
@@ -71,6 +63,19 @@ pub async fn execute_shell(cmd: String, registry: &ToolRegistry) -> Result<ToolO
         stderr,
         exit_code: output.status.code().unwrap_or(-1),
     })
+}
+
+pub(crate) fn ensure_program_allowed(program: &str, registry: &ToolRegistry) -> Result<(), ToolError> {
+    if registry.shell_blocklist.read().unwrap().contains(program) {
+        return Err(ToolError::NotAllowed);
+    }
+    if registry.shell_mode == ShellMode::Allowlist && !registry.shell_allow_all {
+        let allowed = registry.shell_allowlist.read().unwrap().contains(program);
+        if !allowed {
+            return Err(ToolError::NotAllowed);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn truncate_bytes(data: &[u8], max: usize) -> String {

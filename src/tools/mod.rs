@@ -10,6 +10,22 @@ pub mod search;
 pub mod shell;
 pub mod tmux;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellMode {
+    Allowlist,
+    Blocklist,
+}
+
+impl ShellMode {
+    pub fn parse(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("blocklist") {
+            ShellMode::Blocklist
+        } else {
+            ShellMode::Allowlist
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolCall {
     Shell { cmd: String },
@@ -65,6 +81,8 @@ impl DangerGuard {
 #[derive(Clone)]
 pub struct ToolRegistry {
     pub shell_allowlist: Arc<RwLock<HashSet<String>>>,
+    pub shell_blocklist: Arc<RwLock<HashSet<String>>>,
+    pub shell_mode: ShellMode,
     pub tmux_allowlist: Arc<RwLock<HashSet<String>>>,
     pub http_allowed_domains: Arc<RwLock<HashSet<String>>>,
     pub http_proxy: Option<String>,
@@ -83,6 +101,8 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new(
         shell_allowlist: Vec<String>,
+        shell_blocklist: Vec<String>,
+        shell_mode: ShellMode,
         tmux_allowlist: Vec<String>,
         http_allowed_domains: Vec<String>,
         http_proxy: Option<String>,
@@ -98,6 +118,7 @@ impl ToolRegistry {
         memory: MemoryStore,
     ) -> anyhow::Result<Self> {
         let mut shell: HashSet<String> = shell_allowlist.into_iter().collect();
+        let mut shell_block: HashSet<String> = shell_blocklist.into_iter().collect();
         let mut tmux: HashSet<String> = tmux_allowlist.into_iter().collect();
         let http: HashSet<String> = http_allowed_domains.into_iter().collect();
 
@@ -110,6 +131,8 @@ impl ToolRegistry {
 
         Ok(Self {
             shell_allowlist: Arc::new(RwLock::new(shell)),
+            shell_blocklist: Arc::new(RwLock::new(shell_block)),
+            shell_mode,
             tmux_allowlist: Arc::new(RwLock::new(tmux)),
             http_allowed_domains: Arc::new(RwLock::new(http)),
             http_proxy,

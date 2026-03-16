@@ -50,6 +50,8 @@ async fn main() -> anyhow::Result<()> {
     let guard = DangerGuard::new(&cfg.security.danger_patterns)?;
     let tools = ToolRegistry::new(
         cfg.tools.shell.allowlist.clone(),
+        cfg.tools.shell.blocklist.clone(),
+        crate::tools::ShellMode::parse(&cfg.tools.shell.mode),
         cfg.tools.tmux.allowlist.clone(),
         cfg.tools.http.allowed_domains.clone(),
         proxy_for_clients.clone(),

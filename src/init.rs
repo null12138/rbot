@@ -54,6 +54,10 @@ pub fn run() -> anyhow::Result<()> {
         .into_iter()
         .map(|s| s.to_string())
         .collect();
+    let blocklist_shell = vec!["rm", "sudo", "shutdown", "reboot", "mkfs", "dd"]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
     let allowlist_tmux = vec![
         "new-session",
         "list-sessions",
@@ -110,6 +114,8 @@ pub fn run() -> anyhow::Result<()> {
         tools: ToolsConfig {
             shell: ShellToolConfig {
                 allowlist: allowlist_shell,
+                blocklist: blocklist_shell,
+                mode: "blocklist".into(),
                 allow_all: false,
                 allow_meta: false,
                 use_shell: false,
