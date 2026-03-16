@@ -9,6 +9,8 @@ use chrono::Local;
 use std::collections::HashMap;
 use std::time::Instant;
 use std::sync::Arc;
+use tracing::{info, warn};
+use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MessageId, ParseMode};
@@ -701,7 +703,11 @@ async fn chat_stream_with_updates(
     messages: Vec<LlmMessage>,
     options: ChatOptions,
     ctx: &StreamContext,
+    request_id: &str,
+    round: usize,
 ) -> anyhow::Result<LlmResponse> {
+    let started = Instant::now();
+    info!(request_id, round, "llm.stream.start");
     let mut editor = StreamEditor::new(ctx).await?;
     let mut rx = llm.chat_stream(messages, options).await?;
     let mut content = String::new();
@@ -720,6 +726,14 @@ async fn chat_stream_with_updates(
             StreamEvent::Error(err) => return Err(anyhow::anyhow!(err)),
         }
     }
+    info!(
+        request_id,
+        round,
+        elapsed_ms = started.elapsed().as_millis(),
+        tool_calls = tool_calls.len(),
+        content_len = content.len(),
+        "llm.stream.done"
+    );
     Ok(LlmResponse { content, tool_calls })
 }
 
@@ -809,22 +823,82 @@ async fn chat_with_timeout(
     max_tool_calls_override: Option<usize>,
     stream: Option<StreamContext>,
 ) -> anyhow::Result<ChatResult> {
+    let request_id = Uuid::new_v4().to_string();
     let timeout_secs = state
         .cfg
         .llm
         .overall_timeout_secs
         .unwrap_or_else(|| state.cfg.llm.request_timeout_secs.saturating_add(120));
-    if timeout_secs == 0 {
-        return chat_with_llm(state, chat_id, input, max_tool_calls_override, stream).await;
+    info!(
+        request_id,
+        chat_id,
+        timeout_secs,
+        streaming = stream.is_some(),
+        "chat.start"
+    );
+    let started = Instant::now();
+    let result = if timeout_secs == 0 {
+        chat_with_llm(
+            state,
+            chat_id,
+            input,
+            max_tool_calls_override,
+            stream,
+            request_id.clone(),
+        )
+        .await
+    } else {
+        let timeout = Duration::from_secs(timeout_secs);
+        match time::timeout(
+            timeout,
+            chat_with_llm(
+                state,
+                chat_id,
+                input,
+                max_tool_calls_override,
+                stream,
+                request_id.clone(),
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                warn!(
+                    request_id,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    timeout_secs,
+                    "chat.timeout"
+                );
+                Ok(ChatResult::Reply(format!(
+                    "处理超时（{} 秒）。可以回复“重试”或稍后再试。",
+                    timeout_secs
+                )))
+            }
+        }
+    };
+    match &result {
+        Ok(ChatResult::Reply(text)) => info!(
+            request_id,
+            elapsed_ms = started.elapsed().as_millis(),
+            reply_len = text.len(),
+            "chat.done"
+        ),
+        Ok(ChatResult::ToolLimit { max, suggested }) => info!(
+            request_id,
+            elapsed_ms = started.elapsed().as_millis(),
+            max,
+            suggested,
+            "chat.tool_limit"
+        ),
+        Err(err) => warn!(
+            request_id,
+            elapsed_ms = started.elapsed().as_millis(),
+            error = %err,
+            "chat.error"
+        ),
     }
-    let timeout = Duration::from_secs(timeout_secs);
-    match time::timeout(timeout, chat_with_llm(state, chat_id, input, max_tool_calls_override, stream)).await {
-        Ok(result) => result,
-        Err(_) => Ok(ChatResult::Reply(format!(
-            "处理超时（{} 秒）。可以回复“重试”或稍后再试。",
-            timeout_secs
-        ))),
-    }
+    result
 }
 
 async fn chat_with_llm(
@@ -833,6 +907,7 @@ async fn chat_with_llm(
     input: &str,
     max_tool_calls_override: Option<usize>,
     stream: Option<StreamContext>,
+    request_id: String,
 ) -> anyhow::Result<ChatResult> {
     let llm = match &state.llm {
         Some(llm) => llm.clone(),
@@ -898,7 +973,16 @@ async fn chat_with_llm(
         .unwrap_or(state.cfg.llm.max_tool_calls)
         .max(1);
     let mut tool_calls_used = 0usize;
+    let mut round = 0usize;
     loop {
+        round += 1;
+        info!(
+            request_id = request_id.as_str(),
+            round,
+            messages = messages.len(),
+            tool_calls_used,
+            "llm.call.start"
+        );
         let reply = if let Some(ctx) = &stream {
             match chat_stream_with_updates(
                 llm.clone(),
@@ -908,33 +992,76 @@ async fn chat_with_llm(
                     tools: true,
                 },
                 ctx,
+                request_id.as_str(),
+                round,
             )
             .await
             {
                 Ok(resp) => resp,
-                Err(_) => {
-                    llm.chat(
+                Err(err) => {
+                    warn!(
+                        request_id = request_id.as_str(),
+                        round,
+                        error = %err,
+                        "llm.stream.failed"
+                    );
+                    let started = Instant::now();
+                    let resp = llm.chat(
                         messages.clone(),
                         ChatOptions {
                             temperature: 0.2,
                             tools: true,
                         },
                     )
-                    .await?
+                    .await?;
+                    info!(
+                        request_id = request_id.as_str(),
+                        round,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        tool_calls = resp.tool_calls.len(),
+                        content_len = resp.content.len(),
+                        "llm.chat.done"
+                    );
+                    resp
                 }
             }
         } else {
-            llm.chat(
+            let started = Instant::now();
+            let resp = llm.chat(
                 messages.clone(),
                 ChatOptions {
                     temperature: 0.2,
                     tools: true,
                 },
             )
-            .await?
+            .await?;
+            info!(
+                request_id = request_id.as_str(),
+                round,
+                elapsed_ms = started.elapsed().as_millis(),
+                tool_calls = resp.tool_calls.len(),
+                content_len = resp.content.len(),
+                "llm.chat.done"
+            );
+            resp
         };
+        info!(
+            request_id = request_id.as_str(),
+            round,
+            tool_calls = reply.tool_calls.len(),
+            content_len = reply.content.len(),
+            "llm.call.done"
+        );
         if !reply.tool_calls.is_empty() {
             if tool_calls_used + reply.tool_calls.len() > max_tool_calls {
+                warn!(
+                    request_id = request_id.as_str(),
+                    round,
+                    max_tool_calls,
+                    used = tool_calls_used,
+                    pending = reply.tool_calls.len(),
+                    "tool.limit.hit"
+                );
                 return Ok(ChatResult::ToolLimit {
                     max: max_tool_calls,
                     suggested: suggested_tool_limit(max_tool_calls),
@@ -951,12 +1078,39 @@ async fn chat_with_llm(
                 let tool_result = match tool_call_from_llm(&call) {
                     Ok(tool_call) => {
                         let tool_name = tool_name(&tool_call);
+                        let started = Instant::now();
+                        info!(
+                            request_id = request_id.as_str(),
+                            round,
+                            tool = tool_name,
+                            "tool.start"
+                        );
                         match state.tools.execute(tool_call).await {
-                            Ok(out) => format!(
-                                "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
-                                out.stdout, out.stderr, out.exit_code
-                            ),
-                            Err(err) => format_tool_error_plain(tool_name, &err),
+                            Ok(out) => {
+                                info!(
+                                    request_id = request_id.as_str(),
+                                    round,
+                                    tool = tool_name,
+                                    exit = out.exit_code,
+                                    elapsed_ms = started.elapsed().as_millis(),
+                                    "tool.done"
+                                );
+                                format!(
+                                    "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
+                                    out.stdout, out.stderr, out.exit_code
+                                )
+                            }
+                            Err(err) => {
+                                warn!(
+                                    request_id = request_id.as_str(),
+                                    round,
+                                    tool = tool_name,
+                                    elapsed_ms = started.elapsed().as_millis(),
+                                    error = %err,
+                                    "tool.error"
+                                );
+                                format_tool_error_plain(tool_name, &err)
+                            }
                         }
                     }
                     Err(err) => format!("TOOL_RESULT error: {}", err),
@@ -973,6 +1127,14 @@ async fn chat_with_llm(
         }
         if let Some(tool_call) = parse_tool_call(&reply.content)? {
             if tool_calls_used + 1 > max_tool_calls {
+                warn!(
+                    request_id = request_id.as_str(),
+                    round,
+                    max_tool_calls,
+                    used = tool_calls_used,
+                    pending = 1,
+                    "tool.limit.hit"
+                );
                 return Ok(ChatResult::ToolLimit {
                     max: max_tool_calls,
                     suggested: suggested_tool_limit(max_tool_calls),
@@ -980,12 +1142,39 @@ async fn chat_with_llm(
             }
             tool_calls_used += 1;
             let tool_name = tool_name(&tool_call);
+            let started = Instant::now();
+            info!(
+                request_id = request_id.as_str(),
+                round,
+                tool = tool_name,
+                "tool.start"
+            );
             let tool_result = match state.tools.execute(tool_call).await {
-                Ok(out) => format!(
-                    "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
-                    out.stdout, out.stderr, out.exit_code
-                ),
-                Err(err) => format_tool_error_plain(tool_name, &err),
+                Ok(out) => {
+                    info!(
+                        request_id = request_id.as_str(),
+                        round,
+                        tool = tool_name,
+                        exit = out.exit_code,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "tool.done"
+                    );
+                    format!(
+                        "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
+                        out.stdout, out.stderr, out.exit_code
+                    )
+                }
+                Err(err) => {
+                    warn!(
+                        request_id = request_id.as_str(),
+                        round,
+                        tool = tool_name,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        error = %err,
+                        "tool.error"
+                    );
+                    format_tool_error_plain(tool_name, &err)
+                }
             };
             state.memory.append_message(chat_id, "tool", &tool_result)?;
             messages.push(LlmMessage {
