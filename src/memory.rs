@@ -200,6 +200,15 @@ impl MemoryStore {
         Ok(conn.last_insert_rowid())
     }
 
+    pub fn disable_schedule(&self, id: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE schedules SET enabled = 0 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
     pub fn list_schedules(&self) -> anyhow::Result<Vec<(i64, i64, String, String, String)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

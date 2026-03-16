@@ -69,12 +69,16 @@ rbot
 Path: `~/.rbot/config/config.toml`  
 Run the TUI config wizard any time with `rbot init`.
 
+**Scheduling**
+- Recurring: `rbot_*` cron (seconds supported).
+- One-time: `once YYYY-MM-DD HH:MM | msg <text>` (timezone from config).
+- Time-only: `once HH:MM` schedules the next occurrence.
+
 **Tools & Security**
-- Shell supports `allowlist` or `blocklist` mode:
-  - `tools.shell.mode = "blocklist"` (default)
-  - `tools.shell.blocklist` is always enforced
-  - `tools.shell.allow_meta` defaults to `false`
-  - `tools.shell.use_shell` defaults to `false`
+- Shell mode: allowlist or blocklist (`tools.shell.mode`).
+- Blocklist is always enforced (`tools.shell.blocklist`).
+- `tools.shell.allow_meta` defaults to `false`.
+- `tools.shell.use_shell` defaults to `false`.
 - `/allow shell <cmd>` only applies in allowlist mode.
 
 **Web Search Tool (Tavily)**
@@ -165,6 +169,11 @@ rbot
 **配置**
 路径：`~/.rbot/config/config.toml`  
 可随时执行 `rbot init` 重新生成/编辑。
+
+**定时**
+- 循环：`rbot_*` cron（支持秒）
+- 一次性：`once YYYY-MM-DD HH:MM | msg <text>`（时区来自配置）
+- 仅时间：`once HH:MM` 会安排到下一次发生
 
 **工具与安全**
 Shell 支持黑名单或白名单：

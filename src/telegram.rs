@@ -5,7 +5,8 @@ use crate::memory::{local_day_string, MemoryStore, StoredMessage};
 use crate::scheduler::{ScheduledAction, Scheduler};
 use crate::skills::SkillManager;
 use crate::tools::{tmux::TmuxAction, ToolCall, ToolError, ToolRegistry};
-use chrono::Local;
+use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::time::Instant;
 use std::sync::Arc;
@@ -242,7 +243,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         send_text(
             &bot,
             msg.chat.id,
-            "定时：<cron_with_prefix> | msg <text> 或 shell <cmd> 或 http <METHOD> <URL> [BODY]。cron 必须以 rbot_ 或 rbot_system_ 开头。",
+            "定时：<cron_with_prefix> | msg <text> / shell <cmd> / http <METHOD> <URL> [BODY]。cron 必须以 rbot_ 或 rbot_system_ 开头。一次性提醒：once <YYYY-MM-DD HH:MM> | msg <text>",
         )
         .await?;
         return Ok(());
@@ -582,7 +583,7 @@ async fn handle_schedule(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue,
         send_text(
             &bot,
             msg.chat.id,
-            "format: <cron_with_prefix> | msg <text> OR shell <cmd> OR http <METHOD> <URL> [BODY]. cron must start with rbot_ or rbot_system_.",
+            "format: <cron_with_prefix> | msg <text> OR shell <cmd> OR http <METHOD> <URL> [BODY]. cron must start with rbot_ or rbot_system_. once: once <YYYY-MM-DD HH:MM> | msg <text>.",
         )
         .await?;
         return Ok(());
@@ -590,8 +591,30 @@ async fn handle_schedule(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue,
     let cron = parts[0].trim();
     let action_str = parts[1].trim();
     let action = parse_schedule_action(action_str)?;
-    let id = state.scheduler.add_schedule(msg.chat.id.0, cron, action).await?;
-    send_text(&bot, msg.chat.id, format!("scheduled id {}", id)).await?;
+    if let Some(rest) = strip_once_prefix(cron) {
+        let tz: Tz = state
+            .cfg
+            .memory
+            .timezone
+            .parse()
+            .unwrap_or(chrono_tz::Asia::Shanghai);
+        let run_at = parse_once_datetime(rest, tz)?;
+        let id = state.scheduler.add_once(msg.chat.id.0, run_at, action).await?;
+        let local_time = run_at.with_timezone(&tz);
+        send_text(
+            &bot,
+            msg.chat.id,
+            format!(
+                "once scheduled at {} (id {})",
+                local_time.format("%Y-%m-%d %H:%M"),
+                id
+            ),
+        )
+        .await?;
+    } else {
+        let id = state.scheduler.add_schedule(msg.chat.id.0, cron, action).await?;
+        send_text(&bot, msg.chat.id, format!("scheduled id {}", id)).await?;
+    }
     dialogue.update(DialogueState::Idle).await?;
     Ok(())
 }
@@ -1442,6 +1465,48 @@ fn parse_schedule_action(text: &str) -> anyhow::Result<ScheduledAction> {
         }
         _ => anyhow::bail!("unknown schedule action"),
     }
+}
+
+fn strip_once_prefix(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    for prefix in ["once", "一次", "单次"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches([' ', ':']);
+            return Some(rest.trim());
+        }
+    }
+    None
+}
+
+fn parse_once_datetime(input: &str, tz: Tz) -> anyhow::Result<DateTime<Utc>> {
+    let s = input.trim();
+    if s.is_empty() {
+        anyhow::bail!("once time missing");
+    }
+    let now_tz = Utc::now().with_timezone(&tz);
+    if s.contains(' ') {
+        for fmt in ["%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M"] {
+            if let Ok(naive) = NaiveDateTime::parse_from_str(s, fmt) {
+                let dt = tz
+                    .from_local_datetime(&naive)
+                    .single()
+                    .unwrap_or_else(|| tz.from_utc_datetime(&naive));
+                return Ok(dt.with_timezone(&Utc));
+            }
+        }
+        anyhow::bail!("invalid datetime format");
+    }
+    let time = NaiveTime::parse_from_str(s, "%H:%M")?;
+    let date = now_tz.date_naive();
+    let naive = NaiveDateTime::new(date, time);
+    let mut dt = tz
+        .from_local_datetime(&naive)
+        .single()
+        .unwrap_or_else(|| tz.from_utc_datetime(&naive));
+    if dt <= now_tz {
+        dt = dt + chrono::Duration::days(1);
+    }
+    Ok(dt.with_timezone(&Utc))
 }
 
 async fn send_tool_output(

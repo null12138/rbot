@@ -133,7 +133,23 @@ impl Scheduler {
                 return;
             }
         };
-        for (_id, chat_id, cron, action_type, action_payload) in schedules {
+        for (id, chat_id, cron, action_type, action_payload) in schedules {
+            if let Some(run_at) = parse_once_marker(&cron) {
+                let action = match parse_action(&action_type, &action_payload) {
+                    Ok(a) => a,
+                    Err(err) => {
+                        tracing::error!("invalid schedule action: {}", err);
+                        continue;
+                    }
+                };
+                let bot = self.bot.clone();
+                let tools = self.tools.clone();
+                let memory = self.memory.clone();
+                tokio::spawn(async move {
+                    run_once(bot, tools, memory, chat_id, id, run_at, action).await;
+                });
+                continue;
+            }
             let action = match parse_action(&action_type, &action_payload) {
                 Ok(a) => a,
                 Err(err) => {
@@ -203,6 +219,29 @@ impl Scheduler {
         };
         let payload = serde_json::to_string(&action)?;
         self.memory.add_schedule(chat_id, &cron_store, action_type, &payload)
+    }
+
+    pub async fn add_once(
+        &self,
+        chat_id: i64,
+        run_at: DateTime<Utc>,
+        action: ScheduledAction,
+    ) -> anyhow::Result<i64> {
+        let cron_store = format!("once@{}", run_at.to_rfc3339());
+        let action_type = match action {
+            ScheduledAction::Message { .. } => "message",
+            ScheduledAction::Tool { .. } => "tool",
+        };
+        let payload = serde_json::to_string(&action)?;
+        let id = self.memory.add_schedule(chat_id, &cron_store, action_type, &payload)?;
+
+        let bot = self.bot.clone();
+        let tools = self.tools.clone();
+        let memory = self.memory.clone();
+        tokio::spawn(async move {
+            run_once(bot, tools, memory, chat_id, id, run_at, action).await;
+        });
+        Ok(id)
     }
 }
 
@@ -337,6 +376,14 @@ fn normalize_cron(expr: &str) -> String {
     }
 }
 
+fn parse_once_marker(expr: &str) -> Option<DateTime<Utc>> {
+    let trimmed = expr.trim();
+    let rest = trimmed.strip_prefix("once@")?;
+    DateTime::parse_from_rfc3339(rest)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
 async fn run_cron_loop<F, Fut>(cron_expr: &str, mut job: F) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut + Send + 'static,
@@ -397,6 +444,26 @@ async fn execute_action(bot: AutoSend<Bot>, tools: ToolRegistry, chat_id: i64, a
             }
         }
     }
+}
+
+async fn run_once(
+    bot: AutoSend<Bot>,
+    tools: ToolRegistry,
+    memory: MemoryStore,
+    chat_id: i64,
+    schedule_id: i64,
+    run_at: DateTime<Utc>,
+    action: ScheduledAction,
+) {
+    let now = Utc::now();
+    if run_at > now {
+        let wait = run_at.signed_duration_since(now);
+        if let Ok(dur) = wait.to_std() {
+            sleep(dur).await;
+        }
+    }
+    execute_action(bot, tools, chat_id, action).await;
+    let _ = memory.disable_schedule(schedule_id);
 }
 
 fn format_tool_output_html(output: &crate::tools::ToolOutput) -> String {

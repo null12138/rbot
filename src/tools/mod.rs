@@ -118,7 +118,7 @@ impl ToolRegistry {
         memory: MemoryStore,
     ) -> anyhow::Result<Self> {
         let mut shell: HashSet<String> = shell_allowlist.into_iter().collect();
-        let mut shell_block: HashSet<String> = shell_blocklist.into_iter().collect();
+        let shell_block: HashSet<String> = shell_blocklist.into_iter().collect();
         let mut tmux: HashSet<String> = tmux_allowlist.into_iter().collect();
         let http: HashSet<String> = http_allowed_domains.into_iter().collect();
 
