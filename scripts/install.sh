@@ -138,7 +138,11 @@ chmod +x "$BIN_DIR/rbot"
 
 if [ ! -f "$RBOT_HOME/config/config.toml" ]; then
   echo "Running rbot init..."
-  RBOT_HOME="$RBOT_HOME" "$BIN_DIR/rbot" init
+  if [ -r /dev/tty ]; then
+    RBOT_HOME="$RBOT_HOME" "$BIN_DIR/rbot" init < /dev/tty
+  else
+    RBOT_HOME="$RBOT_HOME" "$BIN_DIR/rbot" init
+  fi
 fi
 
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
