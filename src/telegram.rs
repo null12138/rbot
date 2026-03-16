@@ -128,8 +128,10 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
             return Ok(());
         }
         if is_reject(text) {
-            let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
-            map.remove(&chat_id_i64);
+            {
+                let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                map.remove(&chat_id_i64);
+            }
             bot.send_message(chat_id, escape_html("已取消"))
                 .parse_mode(ParseMode::Html)
                 .await?;
@@ -469,7 +471,7 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
         .await
         .ok()?;
     let (stop, mut stop_rx) = oneshot::channel::<()>();
-    let bot = bot.clone();
+    let bot_clone = bot.clone();
     let message_id = message.id;
     tokio::spawn(async move {
         let frames = [
@@ -486,10 +488,11 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
             tokio::select! {
                 _ = &mut stop_rx => break,
                 _ = ticker.tick() => {
-                    let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+                    let _ = bot_clone.send_chat_action(chat_id, ChatAction::Typing).await;
                     let frame = frames[idx % frames.len()];
                     idx = idx.wrapping_add(1);
-                    let _ = bot.edit_message_text(chat_id, message_id, frame)
+                    let _ = bot_clone
+                        .edit_message_text(chat_id, message_id, frame)
                         .parse_mode(ParseMode::Html)
                         .await;
                 }
