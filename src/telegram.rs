@@ -918,7 +918,7 @@ async fn chat_with_llm(
     messages.push(LlmMessage {
         role: "system".into(),
         content: format!(
-            "Persona:\n{}\n\nRules:\n- You can use tools (shell/http/tmux/search/pdf) proactively to achieve the goal.\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- Avoid installing new dependencies unless the user explicitly asks. Prefer built-in tools (e.g., use the pdf tool for PDF parsing).\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For real-time or web data, attempt search/http tool calls; do not claim you cannot access the network unless a tool error explicitly says so.\n- If a tool call fails, surface the exact error and give a concrete config fix (e.g., enable tools.http.allow_all or set tools.search.api_key).\n- Minimize clarifying questions. When the request is ambiguous, choose a reasonable default and include brief alternatives (e.g., for 'today oil price' provide WTI + Brent) instead of asking.\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Use official tool calls when tools are needed.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
+            "Persona:\n{}\n\nRules:\n- Prefer replying directly and fast; avoid overthinking.\n- Use only official function tool calls when tools are needed. Do NOT output manual tool instructions like \"TOOL:\".\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- Avoid installing new dependencies unless the user explicitly asks. Prefer built-in tools (e.g., use the pdf tool for PDF parsing).\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For real-time or web data, attempt search/http tool calls; do not claim you cannot access the network unless a tool error explicitly says so.\n- If a tool call fails, surface the exact error and give a concrete config fix (e.g., enable tools.http.allow_all or set tools.search.api_key).\n- Minimize clarifying questions. When the request is ambiguous, choose a reasonable default and include brief alternatives (e.g., for 'today oil price' provide WTI + Brent) instead of asking.\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
             state.persona
         ),
         tool_call_id: None,
@@ -1126,72 +1126,6 @@ async fn chat_with_llm(
             }
             continue;
         }
-        if let Some(tool_call) = parse_tool_call(&reply.content)? {
-            if tool_calls_used + 1 > max_tool_calls {
-                warn!(
-                    request_id = request_id.as_str(),
-                    round,
-                    max_tool_calls,
-                    used = tool_calls_used,
-                    pending = 1,
-                    "tool.limit.hit"
-                );
-                return Ok(ChatResult::ToolLimit {
-                    max: max_tool_calls,
-                    suggested: suggested_tool_limit(max_tool_calls),
-                });
-            }
-            tool_calls_used += 1;
-            let tool_name = tool_name(&tool_call);
-            let started = Instant::now();
-            info!(
-                request_id = request_id.as_str(),
-                round,
-                tool = tool_name,
-                "tool.start"
-            );
-            let tool_result = match state.tools.execute(tool_call).await {
-                Ok(out) => {
-                    info!(
-                        request_id = request_id.as_str(),
-                        round,
-                        tool = tool_name,
-                        exit = out.exit_code,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        "tool.done"
-                    );
-                    format!(
-                        "TOOL_RESULT stdout:\n{}\n\nstderr:\n{}\ncode:{}",
-                        out.stdout, out.stderr, out.exit_code
-                    )
-                }
-                Err(err) => {
-                    warn!(
-                        request_id = request_id.as_str(),
-                        round,
-                        tool = tool_name,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        error = %err,
-                        "tool.error"
-                    );
-                    format_tool_error_plain(tool_name, &err)
-                }
-            };
-            state.memory.append_message(chat_id, "tool", &tool_result)?;
-            messages.push(LlmMessage {
-                role: "assistant".into(),
-                content: reply.content,
-                tool_call_id: None,
-                tool_calls: None,
-            });
-            messages.push(LlmMessage {
-                role: "system".into(),
-                content: tool_result,
-                tool_call_id: None,
-                tool_calls: None,
-            });
-            continue;
-        }
         return Ok(ChatResult::Reply(reply.content));
     }
 }
@@ -1383,61 +1317,6 @@ fn escape_html(input: &str) -> String {
         }
     }
     out
-}
-
-fn parse_tool_call(text: &str) -> anyhow::Result<Option<ToolCall>> {
-    let first = match text.lines().next() {
-        Some(l) => l.trim(),
-        None => return Ok(None),
-    };
-    if !first.starts_with("TOOL") {
-        return Ok(None);
-    }
-    let rest = first
-        .trim_start_matches("TOOL")
-        .trim_start_matches(':')
-        .trim();
-    if rest.is_empty() {
-        anyhow::bail!("tool call missing args");
-    }
-    let mut parts = rest.splitn(2, ' ');
-    let kind = parts.next().unwrap_or("");
-    let args = parts.next().unwrap_or("").trim();
-    match kind {
-        "shell" => {
-            if args.is_empty() {
-                anyhow::bail!("shell args missing");
-            }
-            Ok(Some(ToolCall::Shell {
-                cmd: args.to_string(),
-            }))
-        }
-        "http" => {
-            let http_parts: Vec<&str> = args.splitn(3, ' ').collect();
-            if http_parts.len() < 2 {
-                anyhow::bail!("http args missing");
-            }
-            Ok(Some(ToolCall::Http {
-                method: http_parts[0].to_string(),
-                url: http_parts[1].to_string(),
-                body: http_parts.get(2).map(|s| s.to_string()),
-            }))
-        }
-        "tmux" => {
-            let action = parse_tmux_action(args)?;
-            Ok(Some(ToolCall::Tmux { action }))
-        }
-        "pdf" => {
-            if args.is_empty() {
-                anyhow::bail!("pdf args missing");
-            }
-            Ok(Some(ToolCall::Pdf {
-                path: args.to_string(),
-                max_chars: None,
-            }))
-        }
-        _ => Ok(None),
-    }
 }
 
 fn tool_call_from_llm(call: &LlmToolCall) -> anyhow::Result<ToolCall> {
