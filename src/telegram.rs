@@ -918,7 +918,7 @@ async fn chat_with_llm(
     messages.push(LlmMessage {
         role: "system".into(),
         content: format!(
-            "Persona:\n{}\n\nRules:\n- Reply fast and directly.\n- Use only function tool calls when needed; never output manual tool instructions.\n- If you can check local state, do it via tools; don’t ask the user to run commands.\n- Don’t install dependencies unless explicitly asked; prefer built-in tools.\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For real-time/web data, use search/http tools; if a tool fails, show the error and a concrete config fix.\n- Ask the minimum clarifying questions; keep context across turns.\n- Format for Telegram HTML (escape <, >, &; only supported tags).\n- Be concise.",
+            "Persona:\n{}\n\nRules:\n- Reply fast and directly.\n- Use only function tool calls when needed; never output manual tool instructions.\n- If you can check local state, do it via tools; don’t ask the user to run commands.\n- Don’t install dependencies unless explicitly asked; prefer built-in tools.\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For data queries, return a single best answer. If it’s unavailable, silently try the next best source/variant and only ask if all options fail.\n- For real-time/web data, use search/http tools; if a tool fails, show the error and a concrete config fix.\n- Ask the minimum clarifying questions; keep context across turns.\n- Format for Telegram HTML (escape <, >, &; only supported tags).\n- Be concise.",
             state.persona
         ),
         tool_call_id: None,
