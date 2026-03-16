@@ -249,6 +249,35 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         return Ok(());
     }
 
+    if let Some((cron, action_str)) = split_inline_schedule(text) {
+        let action = parse_schedule_action(action_str)?;
+        if let Some(rest) = strip_once_prefix(&cron) {
+            let tz: Tz = state
+                .cfg
+                .memory
+                .timezone
+                .parse()
+                .unwrap_or(chrono_tz::Asia::Shanghai);
+            let run_at = parse_once_datetime(rest, tz)?;
+            let id = state.scheduler.add_once(msg.chat.id.0, run_at, action).await?;
+            let local_time = run_at.with_timezone(&tz);
+            send_text(
+                &bot,
+                msg.chat.id,
+                format!(
+                    "once scheduled at {} (id {})",
+                    local_time.format("%Y-%m-%d %H:%M"),
+                    id
+                ),
+            )
+            .await?;
+        } else {
+            let id = state.scheduler.add_schedule(msg.chat.id.0, &cron, action).await?;
+            send_text(&bot, msg.chat.id, format!("scheduled id {}", id)).await?;
+        }
+        return Ok(());
+    }
+
     if text.eq_ignore_ascii_case("白名单") || text.eq_ignore_ascii_case("Whitelist") {
         dialogue.update(DialogueState::AwaitingWhitelist).await?;
         send_text(&bot, msg.chat.id, "白名单：<tool> <command>（仅管理员）").await?;
@@ -1476,6 +1505,30 @@ fn strip_once_prefix(text: &str) -> Option<&str> {
         }
     }
     None
+}
+
+fn split_inline_schedule(text: &str) -> Option<(String, &str)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut content = trimmed;
+    if let Some(rest) = trimmed.strip_prefix("定时") {
+        content = rest.trim_start_matches([' ', ':']);
+    }
+    if !(content.starts_with("rbot_")
+        || content.starts_with("rbot_system_")
+        || content.starts_with("once")
+        || content.starts_with("一次")
+        || content.starts_with("单次"))
+    {
+        return None;
+    }
+    let parts: Vec<&str> = content.splitn(2, '|').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    Some((parts[0].trim().to_string(), parts[1].trim()))
 }
 
 fn parse_once_datetime(input: &str, tz: Tz) -> anyhow::Result<DateTime<Utc>> {
