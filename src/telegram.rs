@@ -14,6 +14,8 @@ use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::{RequestError};
+use teloxide::errors::ApiError;
 use reqwest::{Client, Proxy};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
@@ -72,6 +74,7 @@ struct StreamEditor {
     min_interval: Duration,
     min_chars: usize,
     last_typing: Instant,
+    backoff_until: Option<Instant>,
     progress: Arc<Mutex<Option<ProgressHandle>>>,
     stopped: bool,
 }
@@ -942,6 +945,7 @@ impl StreamEditor {
             min_interval: Duration::from_millis(350),
             min_chars: 24,
             last_typing: now,
+            backoff_until: None,
             progress: ctx.progress.clone(),
             stopped: false,
         })
@@ -966,9 +970,15 @@ impl StreamEditor {
         }
         self.stop_progress().await;
         let now = Instant::now();
+        if let Some(until) = self.backoff_until {
+            if now < until {
+                return;
+            }
+            self.backoff_until = None;
+        }
         if now.duration_since(self.last_typing) >= Duration::from_secs(4) {
             let _ = self.bot.send_chat_action(self.chat_id, ChatAction::Typing).await;
-        self.last_typing = now;
+            self.last_typing = now;
         }
         let delta = content.len().saturating_sub(self.last_len);
         let elapsed = now.duration_since(self.created_at);
@@ -1006,12 +1016,29 @@ impl StreamEditor {
             Ok(_) => {
                 self.last_edit = now;
                 self.last_len = content.len();
-                self.min_interval = Duration::from_millis(450);
+                let dec = Duration::from_millis(50);
+                let floor = Duration::from_millis(350);
+                self.min_interval = self.min_interval.saturating_sub(dec).max(floor);
             }
-            Err(_) => {
-                self.min_interval = Duration::from_millis(1000);
+            Err(err) => {
+                if let Some(delay) = retry_after(&err) {
+                    let extra = Duration::from_millis(120);
+                    self.backoff_until = Some(now + delay + extra);
+                    self.min_interval = self.min_interval.max(delay + extra);
+                } else if matches!(err, RequestError::Api(ApiError::MessageNotModified)) {
+                    self.last_edit = now;
+                } else {
+                    self.min_interval = Duration::from_millis(1200);
+                }
             }
         }
+    }
+}
+
+fn retry_after(err: &RequestError) -> Option<Duration> {
+    match err {
+        RequestError::RetryAfter(delay) => Some(*delay),
+        _ => None,
     }
 }
 
