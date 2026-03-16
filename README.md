@@ -1,102 +1,94 @@
 # rbot
 
-Minimal Rust bot with Telegram UI, tool calling, scheduling, LLM, tmux task management, and three-layer memory.
+Minimal Rust Telegram bot with LLM tool-calling, scheduler, tmux task management, streaming replies, and three-layer memory.
 
-## Features
-- Telegram bot with menu and simple dialogues.
-- Tool system: shell, HTTP, tmux. All gated by allowlist + danger regex.
+**Features**
+- Telegram bot with fast streaming replies.
+- Tool system: shell, HTTP, tmux, Tavily search, PDF text extraction.
 - Scheduler: cron tasks + nightly sleep compaction.
-- OpenAI-compatible LLM API client.
-- Three-layer memory: short-term (recent turns), mid-term (daily summaries), long-term (MEMORY.md + SQLite).
+- OpenAI-compatible LLM API client (streaming supported).
+- Three-layer memory: short-term, daily summaries, long-term.
 - Skills: load `skills/*.toml` and activate via `/skill <name>`.
 
-## Install / Update / Uninstall (one-liner)
+**Quick Start (one-liner)**
 macOS / Linux / FreeBSD:
 ```sh
-curl -fsSL https://github.com/null12138/rbot/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- install
 ```
 Update:
 ```sh
-curl -fsSL https://github.com/null12138/rbot/releases/latest/download/update.sh | sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- update
 ```
 Uninstall:
 ```sh
-curl -fsSL https://github.com/null12138/rbot/releases/latest/download/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- uninstall
+```
+Start in tmux:
+```sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- start
+```
+Stop:
+```sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- stop
+```
+Logs:
+```sh
+curl -fsSL https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.sh | sh -s -- logs 200
 ```
 
 Windows (PowerShell):
 ```powershell
-irm https://github.com/null12138/rbot/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.ps1 | iex
 ```
 Update:
 ```powershell
-irm https://github.com/null12138/rbot/releases/latest/download/update.ps1 | iex
+irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.ps1 -OutFile $env:TEMP\rbot.ps1; & $env:TEMP\rbot.ps1 update
 ```
 Uninstall:
 ```powershell
-irm https://github.com/null12138/rbot/releases/latest/download/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/null12138/rbot/main/scripts/rbot.ps1 -OutFile $env:TEMP\rbot.ps1; & $env:TEMP\rbot.ps1 uninstall
 ```
 
-The installer will download the latest release for your OS/arch, install it to `~/.rbot`, and run `rbot init` for guided configuration.
+The installer downloads the latest **tagged** release for your OS/arch, installs to `~/.rbot`, and runs `rbot init` (TUI).
 Run the bot with:
 ```sh
 rbot
 ```
 
-Optional environment overrides:
-- `RBOT_VERSION` (e.g. `v0.1.0`)
-- `RBOT_HOME` (default `~/.rbot`)
-- `RBOT_BIN_DIR` (default `~/.local/bin` on Unix, `%LOCALAPPDATA%\\rbot\\bin` on Windows)
+**Environment Overrides**
+- `RBOT_VERSION` (default: `latest` tag)
+- `RBOT_REPO` (default: `null12138/rbot`)
+- `RBOT_HOME` (default: `~/.rbot`)
+- `RBOT_BIN_DIR` (default: `~/.local/bin` on Unix, `%LOCALAPPDATA%\\rbot\\bin` on Windows)
+- `RBOT_TMUX_SESSION` (default: `rbot`)
 - `RBOT_KEEP_CONFIG` (set to keep config/data when uninstalling)
 
-## Build From Source
-1. Run config wizard:
-   - `cargo run -- init`
-2. (Optional) If you prefer manual config, copy:
-   - `config/config.example.toml` -> `config/config.toml`
-3. Fill in tokens and allowlists.
-4. Run:
-   - `cargo run`
+**Config**
+Path: `~/.rbot/config/config.toml`  
+Run the TUI config wizard any time with `rbot init`.
 
-## Proxy Fallback
-By default rbot runs without proxy. If Telegram API is unreachable and `network.proxy_url`
-is set (or `RBOT_PROXY` is provided), it will retry with the proxy automatically.
+**Tools & Security**
+- Shell supports `allowlist` or `blocklist` mode:
+  - `tools.shell.mode = "blocklist"` (default)
+  - `tools.shell.blocklist` is always enforced
+  - `tools.shell.allow_meta` defaults to `false`
+  - `tools.shell.use_shell` defaults to `false`
+- `/allow shell <cmd>` only applies in allowlist mode.
 
-## Web Search Tool (Tavily)
-RBot includes a built-in `search` tool powered by Tavily. Configure it in `config/config.toml`:
+**Web Search Tool (Tavily)**
 ```
 [tools.search]
 api_key = ""         # Tavily API key
 endpoint = ""        # optional override (default: https://api.tavily.com/search)
 limit = 5
 ```
-Once configured, you can ask the bot to search directly (it will use the tool).
 
-## Persona
-Edit `config/persona.md` to adjust the assistant's tone and constraints.
+**Build From Source**
+1. `cargo run -- init`
+2. (Optional) copy `config/config.example.toml` -> `config/config.toml`
+3. `cargo run`
 
-## Telegram Commands
-- `/start` or `/menu`: show menu
-- `/skill <name>`: activate skill
-- `/skill_off`: deactivate
-- `/allow <tool> <command>`: extend allowlist (admin only)
-
-## Scheduling
-Input format (cron must start with `rbot_` or `rbot_system_`):
-```
-<cron_with_prefix> | msg <text>
-<cron_with_prefix> | shell <cmd>
-<cron_with_prefix> | http <METHOD> <URL> [BODY]
-```
-Cron uses `cron` crate (seconds supported). Example:
-```
-rbot_0 */5 * * * * | msg heartbeat
-```
-
-## Sleep Compaction
-Nightly task (`memory.sleep_time`) condenses the day log:
-- Retained items -> `memory/<chat_id>/MEMORY.md`
-- Other items -> `memory/<chat_id>/sleep/YYYY-MM-DD.md`
-
-## Heartbeat
-Writes `memory/heartbeat.txt` every `scheduler.heartbeat_interval_secs`.
+**Troubleshooting**
+- `command not found`: add `~/.local/bin` to your PATH or run `/home/<user>/.local/bin/rbot`.
+- `Not Found` from Telegram: bot token invalid or whitespace in token.
+- `TerminatedByOtherGetUpdates`: more than one bot instance is running.
