@@ -571,7 +571,7 @@ async fn try_like_message(state: &AppState, msg: &Message) -> Option<()> {
 
 async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
     let message = bot
-        .send_message(chat_id, "☁️☁️☁️～ [=   ]")
+        .send_message(chat_id, "☁️☁️☁️～")
         .parse_mode(ParseMode::Html)
         .await
         .ok()?;
@@ -579,27 +579,12 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     let bot_clone = bot.clone();
     let message_id = message.id;
     let join = tokio::spawn(async move {
-        let frames = [
-            "☁️☁️☁️～ [=   ]",
-            "☁️☁️☁️～ [==  ]",
-            "☁️☁️☁️～ [=== ]",
-            "☁️☁️☁️～ [====]",
-            "☁️☁️☁️～ [=== ]",
-            "☁️☁️☁️～ [==  ]",
-        ];
-        let mut idx = 0usize;
         let mut ticker = time::interval(Duration::from_secs(4));
         loop {
             tokio::select! {
                 _ = &mut stop_rx => break,
                 _ = ticker.tick() => {
                     let _ = bot_clone.send_chat_action(chat_id, ChatAction::Typing).await;
-                    let frame = frames[idx % frames.len()];
-                    idx = idx.wrapping_add(1);
-                    let _ = bot_clone
-                        .edit_message_text(chat_id, message_id, frame)
-                        .parse_mode(ParseMode::Html)
-                        .await;
                 }
             }
         }
