@@ -1,22 +1,31 @@
-use crate::config::{Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, SchedulerConfig, SearchToolConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig, TmuxToolConfig};
+use crate::config::{
+    Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, SchedulerConfig,
+    SearchToolConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig,
+    TmuxToolConfig,
+};
+use dialoguer::Input;
 use std::io::{self, Write};
 use std::path::Path;
 
 pub fn run() -> anyhow::Result<()> {
-    let token = prompt("Telegram token", None)?;
-    let admin_user_ids = prompt("Admin user IDs (comma separated)", Some("123456789".into()))?;
+    let prompter = Prompter::new();
 
-    let base_url = prompt("LLM base_url", Some("https://api.openai.com".into()))?;
-    let api_key = prompt("LLM api_key", Some("".into()))?;
-    let model = prompt("LLM model", Some("gpt-4o-mini".into()))?;
-    let embed_model = prompt("Embedding model (optional)", Some("text-embedding-3-small".into()))?;
+    let token = prompter.prompt("Telegram token", None, false)?;
+    let admin_user_ids =
+        prompter.prompt("Admin user IDs (comma separated)", Some("123456789"), false)?;
 
-    let sleep_time = prompt("Sleep time (HH:MM)", Some("02:30".into()))?;
-    let timezone = prompt("Timezone", Some("Asia/Shanghai".into()))?;
-    let heartbeat = prompt("Heartbeat interval secs", Some("60".into()))?;
-    let search_api_key = prompt("Tavily api_key (optional)", Some("".into()))?;
-    let search_endpoint = prompt("Tavily endpoint (optional)", Some("".into()))?;
-    let search_limit = prompt("Search result limit", Some("5".into()))?;
+    let base_url = prompter.prompt("LLM base_url", Some("https://api.openai.com"), false)?;
+    let api_key = prompter.prompt("LLM api_key", Some(""), true)?;
+    let model = prompter.prompt("LLM model", Some("gpt-4o-mini"), false)?;
+    let embed_model =
+        prompter.prompt("Embedding model (optional)", Some("text-embedding-3-small"), true)?;
+
+    let sleep_time = prompter.prompt("Sleep time (HH:MM)", Some("02:30"), false)?;
+    let timezone = prompter.prompt("Timezone", Some("Asia/Shanghai"), false)?;
+    let heartbeat = prompter.prompt("Heartbeat interval secs", Some("60"), false)?;
+    let search_api_key = prompter.prompt("Tavily api_key (optional)", Some(""), true)?;
+    let search_endpoint = prompter.prompt("Tavily endpoint (optional)", Some(""), true)?;
+    let search_limit = prompter.prompt("Search result limit", Some("5"), false)?;
 
     let allowlist_shell = vec!["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
         .into_iter()
@@ -118,9 +127,40 @@ pub fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn prompt(label: &str, default: Option<String>) -> anyhow::Result<String> {
+struct Prompter {
+    use_tui: bool,
+}
+
+impl Prompter {
+    fn new() -> Self {
+        let use_tui = atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout);
+        Self { use_tui }
+    }
+
+    fn prompt(&self, label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::Result<String> {
+        if self.use_tui {
+            prompt_tui(label, default, allow_empty)
+        } else {
+            prompt_plain(label, default, allow_empty)
+        }
+    }
+}
+
+fn prompt_tui(label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::Result<String> {
+    let mut input = Input::<String>::new().with_prompt(label);
+    if let Some(d) = default {
+        input = input.default(d.to_string());
+    }
+    if allow_empty {
+        input = input.allow_empty(true);
+    }
+    let value = input.interact_text()?;
+    Ok(value.trim().to_string())
+}
+
+fn prompt_plain(label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::Result<String> {
     let mut stdout = io::stdout();
-    if let Some(d) = &default {
+    if let Some(d) = default {
         write!(stdout, "{} [{}]: ", label, d)?;
     } else {
         write!(stdout, "{}: ", label)?;
@@ -131,10 +171,14 @@ fn prompt(label: &str, default: Option<String>) -> anyhow::Result<String> {
     io::stdin().read_line(&mut input)?;
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        Ok(default.unwrap_or_default())
-    } else {
-        Ok(trimmed.to_string())
+        if let Some(d) = default {
+            return Ok(d.to_string());
+        }
+        if allow_empty {
+            return Ok(String::new());
+        }
     }
+    Ok(trimmed.to_string())
 }
 
 fn parse_id_list(input: &str) -> Vec<i64> {
