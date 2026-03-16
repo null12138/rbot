@@ -3,29 +3,52 @@ use crate::config::{
     SearchToolConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig,
     TmuxToolConfig,
 };
-use dialoguer::Input;
+use dialoguer::{Confirm, Input, Password};
 use std::io::{self, Write};
 use std::path::Path;
 
 pub fn run() -> anyhow::Result<()> {
     let prompter = Prompter::new();
 
-    let token = prompter.prompt("Telegram token", None, false)?;
+    let token = prompter.prompt_secret("Telegram token", None, false)?;
     let admin_user_ids =
         prompter.prompt("Admin user IDs (comma separated)", Some("123456789"), false)?;
 
     let base_url = prompter.prompt("LLM base_url", Some("https://api.openai.com"), false)?;
-    let api_key = prompter.prompt("LLM api_key", Some(""), true)?;
+    let api_key = prompter.prompt_secret("LLM api_key", Some(""), true)?;
     let model = prompter.prompt("LLM model", Some("gpt-4o-mini"), false)?;
-    let embed_model =
-        prompter.prompt("Embedding model (optional)", Some("text-embedding-3-small"), true)?;
+    let use_defaults = prompter.confirm("Use defaults for advanced settings?", true)?;
 
-    let sleep_time = prompter.prompt("Sleep time (HH:MM)", Some("02:30"), false)?;
-    let timezone = prompter.prompt("Timezone", Some("Asia/Shanghai"), false)?;
-    let heartbeat = prompter.prompt("Heartbeat interval secs", Some("60"), false)?;
-    let search_api_key = prompter.prompt("Tavily api_key (optional)", Some(""), true)?;
-    let search_endpoint = prompter.prompt("Tavily endpoint (optional)", Some(""), true)?;
-    let search_limit = prompter.prompt("Search result limit", Some("5"), false)?;
+    let (embed_model, sleep_time, timezone, heartbeat, search_api_key, search_endpoint, search_limit) =
+        if use_defaults {
+            (
+                "text-embedding-3-small".to_string(),
+                "02:30".to_string(),
+                "Asia/Shanghai".to_string(),
+                "60".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "5".to_string(),
+            )
+        } else {
+            let embed_model =
+                prompter.prompt("Embedding model (optional)", Some("text-embedding-3-small"), true)?;
+            let sleep_time = prompter.prompt("Sleep time (HH:MM)", Some("02:30"), false)?;
+            let timezone = prompter.prompt("Timezone", Some("Asia/Shanghai"), false)?;
+            let heartbeat = prompter.prompt("Heartbeat interval secs", Some("60"), false)?;
+            let search_api_key = prompter.prompt("Tavily api_key (optional)", Some(""), true)?;
+            let search_endpoint = prompter.prompt("Tavily endpoint (optional)", Some(""), true)?;
+            let search_limit = prompter.prompt("Search result limit", Some("5"), false)?;
+            (
+                embed_model,
+                sleep_time,
+                timezone,
+                heartbeat,
+                search_api_key,
+                search_endpoint,
+                search_limit,
+            )
+        };
 
     let allowlist_shell = vec!["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
         .into_iter()
@@ -144,6 +167,31 @@ impl Prompter {
             prompt_plain(label, default, allow_empty)
         }
     }
+
+    fn prompt_secret(
+        &self,
+        label: &str,
+        default: Option<&str>,
+        allow_empty: bool,
+    ) -> anyhow::Result<String> {
+        if self.use_tui {
+            prompt_secret_tui(label, default, allow_empty)
+        } else {
+            prompt_plain(label, default, allow_empty)
+        }
+    }
+
+    fn confirm(&self, label: &str, default: bool) -> anyhow::Result<bool> {
+        if self.use_tui {
+            let value = Confirm::new()
+                .with_prompt(label)
+                .default(default)
+                .interact()?;
+            Ok(value)
+        } else {
+            Ok(default)
+        }
+    }
 }
 
 fn prompt_tui(label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::Result<String> {
@@ -155,6 +203,23 @@ fn prompt_tui(label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::
         input = input.allow_empty(true);
     }
     let value = input.interact_text()?;
+    Ok(value.trim().to_string())
+}
+
+fn prompt_secret_tui(label: &str, default: Option<&str>, allow_empty: bool) -> anyhow::Result<String> {
+    let mut input = Password::new().with_prompt(label);
+    if allow_empty {
+        input = input.allow_empty_password(true);
+    }
+    let value = input.interact()?;
+    if value.trim().is_empty() {
+        if let Some(d) = default {
+            return Ok(d.to_string());
+        }
+        if allow_empty {
+            return Ok(String::new());
+        }
+    }
     Ok(value.trim().to_string())
 }
 
