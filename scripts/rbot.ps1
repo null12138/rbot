@@ -14,6 +14,53 @@ $BinDir = if ($env:RBOT_BIN_DIR) { $env:RBOT_BIN_DIR } else { Join-Path $env:LOC
 $AppBin = Join-Path $RbotHome "bin"
 $KeepConfig = $env:RBOT_KEEP_CONFIG
 
+function Ensure-SectionKey {
+  param(
+    [string]$Path,
+    [string]$Section,
+    [string]$Key,
+    [string]$Value
+  )
+  $lines = Get-Content -Path $Path
+  $secLine = "[$Section]"
+  $secStart = -1
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq $secLine) { $secStart = $i; break }
+  }
+  if ($secStart -eq -1) {
+    $lines += ""
+    $lines += $secLine
+    $lines += "$Key = $Value"
+    Set-Content -Path $Path -Value $lines -Encoding UTF8
+    return
+  }
+  $hasKey = $false
+  $secEnd = $lines.Count
+  for ($i = $secStart + 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim().StartsWith("[")) { $secEnd = $i; break }
+    if ($lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=") { $hasKey = $true; break }
+  }
+  if ($hasKey) { return }
+  $before = $lines[0..($secEnd - 1)]
+  $after = @()
+  if ($secEnd -lt $lines.Count) { $after = $lines[$secEnd..($lines.Count - 1)] }
+  $newLines = @()
+  $newLines += $before
+  $newLines += "$Key = $Value"
+  if ($after.Count -gt 0) { $newLines += $after }
+  Set-Content -Path $Path -Value $newLines -Encoding UTF8
+}
+
+function Update-Config {
+  $cfg = Join-Path $RbotHome "config\config.toml"
+  if (-not (Test-Path $cfg)) { return }
+  $bak = "$cfg.bak.$(Get-Date -Format yyyyMMddHHmmss)"
+  Copy-Item $cfg $bak -Force
+  Ensure-SectionKey -Path $cfg -Section "llm" -Key "overall_timeout_secs" -Value "600"
+  Ensure-SectionKey -Path $cfg -Section "tools.shell" -Key "mode" -Value "\"blocklist\""
+  Ensure-SectionKey -Path $cfg -Section "tools.shell" -Key "blocklist" -Value "[\"rm\", \"sudo\", \"shutdown\", \"reboot\", \"mkfs\", \"dd\"]"
+}
+
 function Show-Usage {
 @"
 Usage: rbot.ps1 <command> [args]
@@ -93,6 +140,10 @@ cd /d "%RBOT_HOME%"
   $pathParts = $env:PATH -split ";"
   if ($pathParts -notcontains $BinDir) {
     Write-Host "NOTE: add $BinDir to your PATH to use 'rbot'"
+  }
+
+  if ($Mode -eq "update") {
+    Update-Config
   }
 
   if ($Mode -eq "install") {

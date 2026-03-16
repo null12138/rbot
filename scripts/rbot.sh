@@ -106,6 +106,45 @@ fetch_release() {
   fetch_json "$api_url"
 }
 
+update_config() {
+  cfg="$RBOT_HOME/config/config.toml"
+  [ -f "$cfg" ] || return 0
+  ts="$(date +%Y%m%d%H%M%S 2>/dev/null || date +%s)"
+  cp "$cfg" "$cfg.bak.$ts"
+
+  ensure_key() {
+    section="$1"
+    key="$2"
+    value="$3"
+    awk -v section="$section" -v key="$key" -v value="$value" '
+      function in_section(line) { return line == "[" section "]" }
+      function is_section(line) { return line ~ /^\[/ }
+      BEGIN { insec=0; done=0 }
+      {
+        if (in_section($0)) { insec=1; print; next }
+        if (insec && is_section($0)) {
+          if (!done) { print key " = " value; done=1 }
+          insec=0; print; next
+        }
+        if (insec && $0 ~ "^[[:space:]]*" key "[[:space:]]*=") { done=1 }
+        print
+      }
+      END {
+        if (insec && !done) { print key " = " value }
+        if (!insec && !done) {
+          print ""
+          print "[" section "]"
+          print key " = " value
+        }
+      }
+    ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+  }
+
+  ensure_key "llm" "overall_timeout_secs" "600"
+  ensure_key "tools.shell" "mode" "\"blocklist\""
+  ensure_key "tools.shell" "blocklist" "[\"rm\", \"sudo\", \"shutdown\", \"reboot\", \"mkfs\", \"dd\"]"
+}
+
 install_or_update() {
   mode="$1"
   ensure_bin_dir
@@ -177,6 +216,10 @@ EOS
     else
       RBOT_HOME="$RBOT_HOME" "$BIN_DIR/rbot" init
     fi
+  fi
+
+  if [ "$mode" = "update" ]; then
+    update_config
   fi
 
   if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then

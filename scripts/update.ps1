@@ -5,6 +5,52 @@ $Version = if ($env:RBOT_VERSION) { $env:RBOT_VERSION } else { "latest" }
 $RbotHome = if ($env:RBOT_HOME) { $env:RBOT_HOME } else { Join-Path $env:USERPROFILE ".rbot" }
 $BinDir = if ($env:RBOT_BIN_DIR) { $env:RBOT_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "rbot\bin" }
 $AppBin = Join-Path $RbotHome "bin"
+function Ensure-SectionKey {
+  param(
+    [string]$Path,
+    [string]$Section,
+    [string]$Key,
+    [string]$Value
+  )
+  $lines = Get-Content -Path $Path
+  $secLine = "[$Section]"
+  $secStart = -1
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq $secLine) { $secStart = $i; break }
+  }
+  if ($secStart -eq -1) {
+    $lines += ""
+    $lines += $secLine
+    $lines += "$Key = $Value"
+    Set-Content -Path $Path -Value $lines -Encoding UTF8
+    return
+  }
+  $hasKey = $false
+  $secEnd = $lines.Count
+  for ($i = $secStart + 1; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim().StartsWith("[")) { $secEnd = $i; break }
+    if ($lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=") { $hasKey = $true; break }
+  }
+  if ($hasKey) { return }
+  $before = $lines[0..($secEnd - 1)]
+  $after = @()
+  if ($secEnd -lt $lines.Count) { $after = $lines[$secEnd..($lines.Count - 1)] }
+  $newLines = @()
+  $newLines += $before
+  $newLines += "$Key = $Value"
+  if ($after.Count -gt 0) { $newLines += $after }
+  Set-Content -Path $Path -Value $newLines -Encoding UTF8
+}
+
+function Update-Config {
+  $cfg = Join-Path $RbotHome "config\config.toml"
+  if (-not (Test-Path $cfg)) { return }
+  $bak = "$cfg.bak.$(Get-Date -Format yyyyMMddHHmmss)"
+  Copy-Item $cfg $bak -Force
+  Ensure-SectionKey -Path $cfg -Section "llm" -Key "overall_timeout_secs" -Value "600"
+  Ensure-SectionKey -Path $cfg -Section "tools.shell" -Key "mode" -Value "\"blocklist\""
+  Ensure-SectionKey -Path $cfg -Section "tools.shell" -Key "blocklist" -Value "[\"rm\", \"sudo\", \"shutdown\", \"reboot\", \"mkfs\", \"dd\"]"
+}
 
 New-Item -ItemType Directory -Force $RbotHome, $BinDir, $AppBin, (Join-Path $RbotHome "config"), (Join-Path $RbotHome "skills"), (Join-Path $RbotHome "data"), (Join-Path $RbotHome "memory") | Out-Null
 
@@ -50,3 +96,5 @@ cd /d "%RBOT_HOME%"
 "@ | Set-Content -Path $cmdPath -Encoding ASCII
 
 Write-Host "Update complete. Run: rbot"
+
+Update-Config
