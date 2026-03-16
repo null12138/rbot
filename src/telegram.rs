@@ -13,7 +13,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{
+    CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
+    KeyboardMarkup, MessageId, ParseMode,
+};
 use reqwest::{Client, Proxy};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
@@ -197,7 +200,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     }
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
-        send_text(&bot, msg.chat.id, "RBot 已就绪。直接提问或输入命令。").await?;
+        send_menu(&bot, msg.chat.id).await?;
         return Ok(());
     }
 
@@ -846,7 +849,7 @@ fn suggested_tool_limit(current: usize) -> usize {
 }
 
 fn is_confirm(text: &str) -> bool {
-    let t = text.trim().to_lowercase();
+    let t = normalize_choice(text);
     matches!(
         t.as_str(),
         "继续"
@@ -866,8 +869,16 @@ fn is_confirm(text: &str) -> bool {
 }
 
 fn is_reject(text: &str) -> bool {
-    let t = text.trim().to_lowercase();
+    let t = normalize_choice(text);
     matches!(t.as_str(), "取消" | "算了" | "不用" | "不需要" | "no" | "n")
+}
+
+fn normalize_choice(text: &str) -> String {
+    let mut t = text.trim().to_lowercase();
+    for token in ["✅", "❌", "👍", "👎"] {
+        t = t.replace(token, "");
+    }
+    t.replace(' ', "")
 }
 
 async fn chat_stream_with_updates(
@@ -1458,6 +1469,23 @@ async fn send_html(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl Into<String>
 async fn send_text(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl AsRef<str>) -> HandlerResult {
     let safe = escape_html(text.as_ref());
     send_html(bot, chat_id, safe).await
+}
+
+async fn send_menu(bot: &AutoSend<Bot>, chat_id: ChatId) -> HandlerResult {
+    let keyboard = yes_no_reply_keyboard();
+    bot.send_message(chat_id, "RBot 已就绪。直接提问或输入命令。")
+        .parse_mode(ParseMode::Html)
+        .reply_markup(keyboard)
+        .await?;
+    Ok(())
+}
+
+fn yes_no_reply_keyboard() -> KeyboardMarkup {
+    KeyboardMarkup::new(vec![vec![
+        KeyboardButton::new("✅ 是"),
+        KeyboardButton::new("❌ 否"),
+    ]])
+    .resize_keyboard(true)
 }
 
 fn tool_name(call: &ToolCall) -> &'static str {
