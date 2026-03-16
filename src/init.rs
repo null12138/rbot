@@ -65,6 +65,7 @@ pub fn run() -> anyhow::Result<()> {
                 Some(embed_model)
             },
             request_timeout_secs: 60,
+            overall_timeout_secs: Some(600),
             max_tool_calls: 16,
         },
         memory: MemoryConfig {

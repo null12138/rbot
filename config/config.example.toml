@@ -8,6 +8,7 @@ api_key = "PUT_API_KEY_HERE"
 model = "gpt-4o-mini"
 embed_model = "text-embedding-3-small"
 request_timeout_secs = 60
+overall_timeout_secs = 600
 max_tool_calls = 16
 
 [memory]

@@ -809,7 +809,14 @@ async fn chat_with_timeout(
     max_tool_calls_override: Option<usize>,
     stream: Option<StreamContext>,
 ) -> anyhow::Result<ChatResult> {
-    let timeout_secs = state.cfg.llm.request_timeout_secs.saturating_add(120);
+    let timeout_secs = state
+        .cfg
+        .llm
+        .overall_timeout_secs
+        .unwrap_or_else(|| state.cfg.llm.request_timeout_secs.saturating_add(120));
+    if timeout_secs == 0 {
+        return chat_with_llm(state, chat_id, input, max_tool_calls_override, stream).await;
+    }
     let timeout = Duration::from_secs(timeout_secs);
     match time::timeout(timeout, chat_with_llm(state, chat_id, input, max_tool_calls_override, stream)).await {
         Ok(result) => result,
