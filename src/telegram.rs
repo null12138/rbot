@@ -177,9 +177,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 let mut map = state.pending_tool_limit.lock().await;
                 map.remove(&chat_id_i64);
             }
-            bot.send_message(chat_id, escape_html("已取消"))
-                .parse_mode(ParseMode::Html)
-                .await?;
+            send_text(&bot, chat_id, "已取消").await?;
             return Ok(());
         }
         {
@@ -189,71 +187,57 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     }
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
-        bot.send_message(msg.chat.id, escape_html("RBot 已就绪。直接提问或输入命令。"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "RBot 已就绪。直接提问或输入命令。").await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("命令") || text.eq_ignore_ascii_case("Run") {
         dialogue.update(DialogueState::AwaitingCommand).await?;
-        bot.send_message(msg.chat.id, escape_html("发送命令（取消请输入 Cancel/取消）"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "发送命令（取消请输入 Cancel/取消）").await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("对话") || text.eq_ignore_ascii_case("Chat") {
-        bot.send_message(msg.chat.id, escape_html("请发送你的问题。"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "请发送你的问题。").await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("取消") || text.eq_ignore_ascii_case("Cancel") {
-        bot.send_message(msg.chat.id, escape_html("已取消"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "已取消").await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("网络") || text.eq_ignore_ascii_case("HTTP") {
         dialogue.update(DialogueState::AwaitingHttp).await?;
-        bot.send_message(msg.chat.id, escape_html("发送 HTTP：METHOD URL [BODY]"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "发送 HTTP：METHOD URL [BODY]").await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("任务") || text.eq_ignore_ascii_case("Tmux") {
         dialogue.update(DialogueState::AwaitingTmux).await?;
-        bot.send_message(
+        send_text(
+            &bot,
             msg.chat.id,
-            escape_html("Tmux：start <name> <cmd> | stop <name> | logs <name> [lines] | list"),
+            "Tmux：start <name> <cmd> | stop <name> | logs <name> [lines] | list",
         )
-        .parse_mode(ParseMode::Html)
         .await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("定时") || text.eq_ignore_ascii_case("Schedule") {
         dialogue.update(DialogueState::AwaitingSchedule).await?;
-        bot.send_message(
+        send_text(
+            &bot,
             msg.chat.id,
-            escape_html(
-                "定时：<cron_with_prefix> | msg <text> 或 shell <cmd> 或 http <METHOD> <URL> [BODY]。cron 必须以 rbot_ 或 rbot_system_ 开头。",
-            ),
+            "定时：<cron_with_prefix> | msg <text> 或 shell <cmd> 或 http <METHOD> <URL> [BODY]。cron 必须以 rbot_ 或 rbot_system_ 开头。",
         )
-        .parse_mode(ParseMode::Html)
         .await?;
         return Ok(());
     }
 
     if text.eq_ignore_ascii_case("白名单") || text.eq_ignore_ascii_case("Whitelist") {
         dialogue.update(DialogueState::AwaitingWhitelist).await?;
-        bot.send_message(msg.chat.id, escape_html("白名单：<tool> <command>（仅管理员）"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "白名单：<tool> <command>（仅管理员）").await?;
         return Ok(());
     }
 
@@ -263,9 +247,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
             out.push_str(&format!("- {}: {}\n", skill.name, skill.description));
         }
         out.push_str("Use /skill <name> or /skill_off");
-        bot.send_message(msg.chat.id, escape_html(&out))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, out).await?;
         return Ok(());
     }
 
@@ -277,9 +259,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         for item in long {
             out.push_str(&format!("- {}\n", item));
         }
-        bot.send_message(msg.chat.id, escape_html(&out))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, out).await?;
         return Ok(());
     }
 
@@ -292,14 +272,10 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         let name = text.trim_start_matches("/skill ").trim();
         match state.skills.activate(msg.chat.id.0, name) {
             Ok(_) => {
-                bot.send_message(msg.chat.id, escape_html(&format!("skill activated: {}", name)))
-                    .parse_mode(ParseMode::Html)
-                    .await?;
+                send_text(&bot, msg.chat.id, format!("skill activated: {}", name)).await?;
             }
             Err(_) => {
-                bot.send_message(msg.chat.id, escape_html("skill not found"))
-                    .parse_mode(ParseMode::Html)
-                    .await?;
+                send_text(&bot, msg.chat.id, "skill not found").await?;
             }
         }
         return Ok(());
@@ -307,9 +283,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
 
     if text.eq_ignore_ascii_case("/skill_off") {
         state.skills.deactivate(msg.chat.id.0);
-        bot.send_message(msg.chat.id, escape_html("skill cleared"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "skill cleared").await?;
         return Ok(());
     }
 
@@ -323,9 +297,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     if text.starts_with("!http ") {
         let parts: Vec<&str> = text.trim_start_matches("!http ").splitn(3, ' ').collect();
         if parts.len() < 2 {
-            bot.send_message(msg.chat.id, escape_html("format: !http METHOD URL [BODY]"))
-                .parse_mode(ParseMode::Html)
-                .await?;
+            send_text(&bot, msg.chat.id, "format: !http METHOD URL [BODY]").await?;
             return Ok(());
         }
         let method = parts[0].to_string();
@@ -345,10 +317,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     }
 
     if let Some(skill) = state.skills.maybe_trigger(msg.chat.id.0, text) {
-        let _ = bot
-            .send_message(msg.chat.id, escape_html(&format!("skill activated: {}", skill.name)))
-            .parse_mode(ParseMode::Html)
-            .await;
+        let _ = send_text(&bot, msg.chat.id, format!("skill activated: {}", skill.name)).await;
     }
 
     // LLM chat
@@ -401,9 +370,7 @@ async fn handle_command(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, 
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
         dialogue.update(DialogueState::Idle).await?;
-        bot.send_message(msg.chat.id, escape_html("Cancelled"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "Cancelled").await?;
         return Ok(());
     }
     let out = state.tools.execute(ToolCall::Shell { cmd: text.to_string() }).await;
@@ -416,16 +383,12 @@ async fn handle_http(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
         dialogue.update(DialogueState::Idle).await?;
-        bot.send_message(msg.chat.id, escape_html("Cancelled"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "Cancelled").await?;
         return Ok(());
     }
     let parts: Vec<&str> = text.splitn(3, ' ').collect();
     if parts.len() < 2 {
-        bot.send_message(msg.chat.id, escape_html("format: METHOD URL [BODY]"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "format: METHOD URL [BODY]").await?;
         return Ok(());
     }
     let method = parts[0].to_string();
@@ -441,9 +404,7 @@ async fn handle_tmux(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
         dialogue.update(DialogueState::Idle).await?;
-        bot.send_message(msg.chat.id, escape_html("Cancelled"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "Cancelled").await?;
         return Ok(());
     }
     let action = parse_tmux_action(text)?;
@@ -457,20 +418,16 @@ async fn handle_schedule(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue,
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
         dialogue.update(DialogueState::Idle).await?;
-        bot.send_message(msg.chat.id, escape_html("Cancelled"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "Cancelled").await?;
         return Ok(());
     }
     let parts: Vec<&str> = text.splitn(2, '|').collect();
     if parts.len() < 2 {
-        bot.send_message(
+        send_text(
+            &bot,
             msg.chat.id,
-            escape_html(
-                "format: <cron_with_prefix> | msg <text> OR shell <cmd> OR http <METHOD> <URL> [BODY]. cron must start with rbot_ or rbot_system_.",
-            ),
+            "format: <cron_with_prefix> | msg <text> OR shell <cmd> OR http <METHOD> <URL> [BODY]. cron must start with rbot_ or rbot_system_.",
         )
-        .parse_mode(ParseMode::Html)
         .await?;
         return Ok(());
     }
@@ -478,9 +435,7 @@ async fn handle_schedule(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue,
     let action_str = parts[1].trim();
     let action = parse_schedule_action(action_str)?;
     let id = state.scheduler.add_schedule(msg.chat.id.0, cron, action).await?;
-    bot.send_message(msg.chat.id, escape_html(&format!("scheduled id {}", id)))
-        .parse_mode(ParseMode::Html)
-        .await?;
+    send_text(&bot, msg.chat.id, format!("scheduled id {}", id)).await?;
     dialogue.update(DialogueState::Idle).await?;
     Ok(())
 }
@@ -489,9 +444,7 @@ async fn handle_whitelist(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue
     let text = msg.text().unwrap_or("").trim();
     if text.eq_ignore_ascii_case("cancel") {
         dialogue.update(DialogueState::Idle).await?;
-        bot.send_message(msg.chat.id, escape_html("Cancelled"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(&bot, msg.chat.id, "Cancelled").await?;
         return Ok(());
     }
     handle_allow_command(&bot, &msg, &state, text).await?;
@@ -503,24 +456,18 @@ async fn handle_allow_command(bot: &AutoSend<Bot>, msg: &Message, state: &AppSta
     let user_id_u64 = msg.from().map(|u| u.id.0).unwrap_or(0);
     let user_id = i64::try_from(user_id_u64).unwrap_or(0);
     if !state.cfg.telegram.admin_user_ids.contains(&user_id) {
-        bot.send_message(msg.chat.id, escape_html("admin only"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(bot, msg.chat.id, "admin only").await?;
         return Ok(());
     }
     let mut parts = text.trim_start_matches("/allow").trim().splitn(2, ' ');
     let tool = parts.next().unwrap_or("").trim();
     let cmd = parts.next().unwrap_or("").trim();
     if tool.is_empty() || cmd.is_empty() {
-        bot.send_message(msg.chat.id, escape_html("format: /allow <tool> <command>"))
-            .parse_mode(ParseMode::Html)
-            .await?;
+        send_text(bot, msg.chat.id, "format: /allow <tool> <command>").await?;
         return Ok(());
     }
     state.tools.extend_allowlist(tool, cmd, user_id)?;
-    bot.send_message(msg.chat.id, escape_html(&format!("allowlist updated: {} {}", tool, cmd)))
-        .parse_mode(ParseMode::Html)
-        .await?;
+    send_text(bot, msg.chat.id, format!("allowlist updated: {} {}", tool, cmd)).await?;
     Ok(())
 }
 
@@ -1150,15 +1097,11 @@ async fn send_tool_output(
     match out {
         Ok(output) => {
             let text = format_tool_output_html(&output);
-            bot.send_message(chat_id, text)
-                .parse_mode(ParseMode::Html)
-                .await?;
+            send_html(bot, chat_id, text).await?;
         }
         Err(err) => {
             let text = escape_html(&format_tool_error_plain(tool_name, &err));
-            bot.send_message(chat_id, text)
-                .parse_mode(ParseMode::Html)
-                .await?;
+            send_html(bot, chat_id, text).await?;
         }
     }
     Ok(())
@@ -1182,6 +1125,18 @@ fn format_tool_output_html(output: &crate::tools::ToolOutput) -> String {
     }
     parts.push(format!("<b>exit</b> {}", output.exit_code));
     parts.join("\n")
+}
+
+async fn send_html(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl Into<String>) -> HandlerResult {
+    bot.send_message(chat_id, text.into())
+        .parse_mode(ParseMode::Html)
+        .await?;
+    Ok(())
+}
+
+async fn send_text(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl AsRef<str>) -> HandlerResult {
+    let safe = escape_html(text.as_ref());
+    send_html(bot, chat_id, safe).await
 }
 
 fn tool_name(call: &ToolCall) -> &'static str {
