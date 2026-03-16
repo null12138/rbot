@@ -13,10 +13,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::{
-    CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
-    KeyboardMarkup, MessageId, ParseMode,
-};
+use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use reqwest::{Client, Proxy};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
@@ -200,7 +197,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     }
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
-        send_menu(&bot, msg.chat.id).await?;
+        send_text(&bot, msg.chat.id, "RBot 已就绪。直接提问或输入命令。").await?;
         return Ok(());
     }
 
@@ -1469,23 +1466,6 @@ async fn send_html(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl Into<String>
 async fn send_text(bot: &AutoSend<Bot>, chat_id: ChatId, text: impl AsRef<str>) -> HandlerResult {
     let safe = escape_html(text.as_ref());
     send_html(bot, chat_id, safe).await
-}
-
-async fn send_menu(bot: &AutoSend<Bot>, chat_id: ChatId) -> HandlerResult {
-    let keyboard = yes_no_reply_keyboard();
-    bot.send_message(chat_id, "RBot 已就绪。直接提问或输入命令。")
-        .parse_mode(ParseMode::Html)
-        .reply_markup(keyboard)
-        .await?;
-    Ok(())
-}
-
-fn yes_no_reply_keyboard() -> KeyboardMarkup {
-    KeyboardMarkup::new(vec![vec![
-        KeyboardButton::new("✅ 是"),
-        KeyboardButton::new("❌ 否"),
-    ]])
-    .resize_keyboard(true)
 }
 
 fn tool_name(call: &ToolCall) -> &'static str {
