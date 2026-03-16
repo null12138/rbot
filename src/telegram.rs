@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::llm::{ChatOptions, LlmClient, LlmMessage, LlmToolCall};
+use crate::llm::{ChatOptions, LlmClient, LlmMessage, LlmToolCall, StreamEvent, LlmResponse};
 use serde::Deserialize;
 use crate::memory::{local_day_string, MemoryStore, StoredMessage};
 use crate::scheduler::{ScheduledAction, Scheduler};
@@ -7,6 +7,7 @@ use crate::skills::SkillManager;
 use crate::tools::{tmux::TmuxAction, ToolCall, ToolError, ToolRegistry};
 use chrono::Local;
 use std::collections::HashMap;
+use std::time::Instant;
 use std::sync::Arc;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
@@ -45,6 +46,25 @@ struct ProgressHandle {
 enum ChatResult {
     Reply(String),
     ToolLimit { max: usize, suggested: usize },
+}
+
+#[derive(Clone)]
+struct StreamContext {
+    bot: AutoSend<Bot>,
+    chat_id: ChatId,
+    message_id: Option<MessageId>,
+    progress: Arc<Mutex<Option<ProgressHandle>>>,
+}
+
+struct StreamEditor {
+    bot: AutoSend<Bot>,
+    chat_id: ChatId,
+    message_id: MessageId,
+    last_edit: Instant,
+    last_len: usize,
+    min_interval: Duration,
+    progress: Arc<Mutex<Option<ProgressHandle>>>,
+    stopped: bool,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -98,11 +118,27 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 map.remove(&chat_id_i64);
             }
             let progress = start_progress(&bot, chat_id).await;
-            let response = chat_with_timeout(&state, chat_id_i64, &pending.input, Some(pending.max_tool_calls)).await;
+            let message_id = progress.as_ref().map(|p| p.message_id);
+            let progress_state = Arc::new(Mutex::new(progress));
+            let stream_ctx = StreamContext {
+                bot: bot.clone(),
+                chat_id,
+                message_id,
+                progress: progress_state.clone(),
+            };
+            let response = chat_with_timeout(
+                &state,
+                chat_id_i64,
+                &pending.input,
+                Some(pending.max_tool_calls),
+                Some(stream_ctx),
+            )
+            .await;
             match response {
                 Ok(ChatResult::Reply(reply)) => {
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
-                    send_reply_with_progress(&bot, chat_id, &reply, progress, true).await?;
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
                 }
                 Ok(ChatResult::ToolLimit { max, suggested }) => {
                     {
@@ -119,12 +155,14 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                         "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
                         max, suggested
                     );
-                    send_reply_with_progress(&bot, chat_id, &prompt, progress, false).await?;
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
                 }
                 Err(err) => {
                     let reply = format!("llm error: {}", err);
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
-                    send_reply_with_progress(&bot, chat_id, &reply, progress, false).await?;
+                    let progress_handle = progress_state.lock().await.take();
+                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
                 }
             }
             return Ok(());
@@ -311,31 +349,44 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     // LLM chat
     state.memory.append_message(chat_id_i64, "user", text)?;
     let progress = start_progress(&bot, chat_id).await;
-    let response = chat_with_timeout(&state, chat_id_i64, text, None).await;
+    let message_id = progress.as_ref().map(|p| p.message_id);
+    let progress_state = Arc::new(Mutex::new(progress));
+    let stream_ctx = StreamContext {
+        bot: bot.clone(),
+        chat_id,
+        message_id,
+        progress: progress_state.clone(),
+    };
+    let response = chat_with_timeout(&state, chat_id_i64, text, None, Some(stream_ctx)).await;
     match response {
         Ok(ChatResult::Reply(reply)) => {
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
-            send_reply_with_progress(&bot, chat_id, &reply, progress, true).await?;
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
         }
         Ok(ChatResult::ToolLimit { max, suggested }) => {
-            let mut map = state.pending_tool_limit.lock().await;
-            map.insert(
-                chat_id_i64,
-                PendingToolLimit {
-                    input: text.to_string(),
-                    max_tool_calls: suggested,
-                },
-            );
+            {
+                let mut map = state.pending_tool_limit.lock().await;
+                map.insert(
+                    chat_id_i64,
+                    PendingToolLimit {
+                        input: text.to_string(),
+                        max_tool_calls: suggested,
+                    },
+                );
+            }
             let prompt = format!(
                 "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
                 max, suggested
             );
-            send_reply_with_progress(&bot, chat_id, &prompt, progress, false).await?;
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
         }
         Err(err) => {
             let reply = format!("llm error: {}", err);
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
-            send_reply_with_progress(&bot, chat_id, &reply, progress, false).await?;
+            let progress_handle = progress_state.lock().await.take();
+            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
         }
     }
     Ok(())
@@ -519,6 +570,7 @@ async fn send_reply_with_progress(
     chat_id: ChatId,
     reply: &str,
     progress: Option<ProgressHandle>,
+    message_id: Option<MessageId>,
     stream: bool,
 ) -> HandlerResult {
     if let Some(handle) = progress {
@@ -555,6 +607,25 @@ async fn send_reply_with_progress(
             let _ = bot.delete_message(chat_id, message_id).await;
         }
         return Ok(());
+    }
+    if let Some(message_id) = message_id {
+        if bot
+            .edit_message_text(chat_id, message_id, reply.to_string())
+            .parse_mode(ParseMode::Html)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        let safe = escape_html(reply);
+        if bot
+            .edit_message_text(chat_id, message_id, safe)
+            .parse_mode(ParseMode::Html)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
     }
     let send = bot
         .send_message(chat_id, reply.to_string())
@@ -646,15 +717,107 @@ fn is_reject(text: &str) -> bool {
     matches!(t.as_str(), "取消" | "算了" | "不用" | "不需要" | "no" | "n")
 }
 
+async fn chat_stream_with_updates(
+    llm: Arc<dyn LlmClient>,
+    messages: Vec<LlmMessage>,
+    options: ChatOptions,
+    ctx: &StreamContext,
+) -> anyhow::Result<LlmResponse> {
+    let mut editor = StreamEditor::new(ctx).await?;
+    let mut rx = llm.chat_stream(messages, options).await?;
+    let mut content = String::new();
+    let mut tool_calls = Vec::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::Delta(delta) => {
+                content.push_str(&delta);
+                editor.update(&content).await;
+            }
+            StreamEvent::Done(resp) => {
+                content = resp.content;
+                tool_calls = resp.tool_calls;
+                break;
+            }
+            StreamEvent::Error(err) => return Err(anyhow::anyhow!(err)),
+        }
+    }
+    Ok(LlmResponse { content, tool_calls })
+}
+
+impl StreamEditor {
+    async fn new(ctx: &StreamContext) -> anyhow::Result<Self> {
+        let message_id = match ctx.message_id {
+            Some(id) => id,
+            None => {
+                let msg = ctx
+                    .bot
+                    .send_message(ctx.chat_id, "处理中...")
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+                msg.id
+            }
+        };
+        Ok(Self {
+            bot: ctx.bot.clone(),
+            chat_id: ctx.chat_id,
+            message_id,
+            last_edit: Instant::now(),
+            last_len: 0,
+            min_interval: Duration::from_millis(450),
+            progress: ctx.progress.clone(),
+            stopped: false,
+        })
+    }
+
+    async fn stop_progress(&mut self) {
+        if self.stopped {
+            return;
+        }
+        if let Some(handle) = self.progress.lock().await.take() {
+            let ProgressHandle { stop, join, .. } = handle;
+            let _ = stop.send(());
+            join.abort();
+            let _ = time::timeout(Duration::from_millis(200), join).await;
+        }
+        self.stopped = true;
+    }
+
+    async fn update(&mut self, content: &str) {
+        if content.is_empty() {
+            return;
+        }
+        self.stop_progress().await;
+        let now = Instant::now();
+        if now.duration_since(self.last_edit) < self.min_interval
+            && content.len().saturating_sub(self.last_len) < 24
+        {
+            return;
+        }
+        let mut safe = escape_html(content);
+        if safe.len() > 3800 {
+            safe.truncate(3800);
+            safe.push_str("…");
+        }
+        let _ = self
+            .bot
+            .edit_message_text(self.chat_id, self.message_id, safe)
+            .parse_mode(ParseMode::Html)
+            .await;
+        self.last_edit = now;
+        self.last_len = content.len();
+    }
+}
+
 async fn chat_with_timeout(
     state: &AppState,
     chat_id: i64,
     input: &str,
     max_tool_calls_override: Option<usize>,
+    stream: Option<StreamContext>,
 ) -> anyhow::Result<ChatResult> {
     let timeout_secs = state.cfg.llm.request_timeout_secs.saturating_add(120);
     let timeout = Duration::from_secs(timeout_secs);
-    match time::timeout(timeout, chat_with_llm(state, chat_id, input, max_tool_calls_override)).await {
+    match time::timeout(timeout, chat_with_llm(state, chat_id, input, max_tool_calls_override, stream)).await {
         Ok(result) => result,
         Err(_) => Ok(ChatResult::Reply(format!(
             "处理超时（{} 秒）。可以回复“重试”或稍后再试。",
@@ -668,6 +831,7 @@ async fn chat_with_llm(
     chat_id: i64,
     input: &str,
     max_tool_calls_override: Option<usize>,
+    stream: Option<StreamContext>,
 ) -> anyhow::Result<ChatResult> {
     let llm = match &state.llm {
         Some(llm) => llm.clone(),
@@ -734,15 +898,40 @@ async fn chat_with_llm(
         .max(1);
     let mut tool_calls_used = 0usize;
     loop {
-        let reply = llm
-            .chat(
+        let reply = if let Some(ctx) = &stream {
+            match chat_stream_with_updates(
+                llm.clone(),
+                messages.clone(),
+                ChatOptions {
+                    temperature: 0.2,
+                    tools: true,
+                },
+                ctx,
+            )
+            .await
+            {
+                Ok(resp) => resp,
+                Err(_) => {
+                    llm.chat(
+                        messages.clone(),
+                        ChatOptions {
+                            temperature: 0.2,
+                            tools: true,
+                        },
+                    )
+                    .await?
+                }
+            }
+        } else {
+            llm.chat(
                 messages.clone(),
                 ChatOptions {
                     temperature: 0.2,
                     tools: true,
                 },
             )
-            .await?;
+            .await?
+        };
         if !reply.tool_calls.is_empty() {
             if tool_calls_used + reply.tool_calls.len() > max_tool_calls {
                 return Ok(ChatResult::ToolLimit {

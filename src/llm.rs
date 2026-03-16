@@ -1,9 +1,11 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
@@ -27,9 +29,21 @@ pub struct LlmResponse {
     pub tool_calls: Vec<LlmToolCall>,
 }
 
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Delta(String),
+    Done(LlmResponse),
+    Error(String),
+}
+
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     async fn chat(&self, messages: Vec<LlmMessage>, options: ChatOptions) -> anyhow::Result<LlmResponse>;
+    async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        options: ChatOptions,
+    ) -> anyhow::Result<mpsc::Receiver<StreamEvent>>;
     async fn embed(&self, inputs: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>>;
 }
 
@@ -77,6 +91,8 @@ struct ChatRequest {
     tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +109,38 @@ struct ChatChoice {
 struct ChatResponseMessage {
     content: Option<String>,
     tool_calls: Option<Vec<LlmToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamResponse {
+    choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    delta: Option<StreamDelta>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallDelta {
+    index: usize,
+    id: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    function: Option<StreamToolCallFunctionDelta>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallFunctionDelta {
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +197,7 @@ impl LlmClient for OpenAIClient {
             temperature: options.temperature,
             tools: if options.tools { Some(default_tools()) } else { None },
             tool_choice: if options.tools { Some("auto".to_string()) } else { None },
+            stream: None,
         };
         let mut attempt = 0;
         let max_attempts = 3;
@@ -214,6 +263,159 @@ impl LlmClient for OpenAIClient {
         let body: EmbedResponse = resp.json().await?;
         Ok(body.data.into_iter().map(|d| d.embedding).collect())
     }
+
+    async fn chat_stream(
+        &self,
+        messages: Vec<LlmMessage>,
+        options: ChatOptions,
+    ) -> anyhow::Result<mpsc::Receiver<StreamEvent>> {
+        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let req = ChatRequest {
+            model: self.model.clone(),
+            messages,
+            temperature: options.temperature,
+            tools: if options.tools { Some(default_tools()) } else { None },
+            tool_choice: if options.tools { Some("auto".to_string()) } else { None },
+            stream: Some(true),
+        };
+        let client = self.http.clone();
+        let api_key = self.api_key.clone();
+        let (tx, rx) = mpsc::channel(32);
+        tokio::spawn(async move {
+            let resp = client.post(&url).bearer_auth(api_key).json(&req).send().await;
+            let resp = match resp {
+                Ok(r) => r,
+                Err(err) => {
+                    let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                    return;
+                }
+            };
+            let resp = match resp.error_for_status() {
+                Ok(r) => r,
+                Err(err) => {
+                    let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                    return;
+                }
+            };
+            let mut stream = resp.bytes_stream();
+            let mut buffer = String::new();
+            let mut content = String::new();
+            let mut tool_calls: Vec<LlmToolCall> = Vec::new();
+            while let Some(item) = stream.next().await {
+                let chunk = match item {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                        return;
+                    }
+                };
+                let text = match std::str::from_utf8(&chunk) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                        return;
+                    }
+                };
+                buffer.push_str(text);
+                while let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    buffer = buffer[idx + 1..].to_string();
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    let Some(data) = line.strip_prefix("data:") else { continue };
+                    let data = data.trim();
+                    if data == "[DONE]" {
+                        let _ = tx
+                            .send(StreamEvent::Done(LlmResponse {
+                                content,
+                                tool_calls,
+                            }))
+                            .await;
+                        return;
+                    }
+                    let parsed: StreamResponse = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                            return;
+                        }
+                    };
+                    let choice = match parsed.choices.get(0) {
+                        Some(c) => c,
+                        None => continue,
+                    };
+                    if let Some(delta) = &choice.delta {
+                        if let Some(delta_text) = &delta.content {
+                            content.push_str(delta_text);
+                            let _ = tx.send(StreamEvent::Delta(delta_text.clone())).await;
+                        }
+                        if let Some(delta_calls) = &delta.tool_calls {
+                            for call in delta_calls {
+                                let entry = ensure_tool_call(&mut tool_calls, call.index);
+                                if let Some(id) = &call.id {
+                                    if entry.id.is_empty() {
+                                        entry.id = id.clone();
+                                    }
+                                }
+                                if let Some(kind) = &call.kind {
+                                    if entry.kind.is_empty() {
+                                        entry.kind = kind.clone();
+                                    }
+                                }
+                                if let Some(func) = &call.function {
+                                    if let Some(name) = &func.name {
+                                        if entry.function.name.is_empty() {
+                                            entry.function.name = name.clone();
+                                        }
+                                    }
+                                    if let Some(args) = &func.arguments {
+                                        entry.function.arguments.push_str(args);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(reason) = &choice.finish_reason {
+                        if reason == "stop" || reason == "tool_calls" || reason == "length" {
+                            let _ = tx
+                                .send(StreamEvent::Done(LlmResponse {
+                                    content,
+                                    tool_calls,
+                                }))
+                                .await;
+                            return;
+                        }
+                    }
+                }
+            }
+            let _ = tx
+                .send(StreamEvent::Done(LlmResponse {
+                    content,
+                    tool_calls,
+                }))
+                .await;
+        });
+        Ok(rx)
+    }
+}
+
+fn ensure_tool_call(calls: &mut Vec<LlmToolCall>, index: usize) -> &mut LlmToolCall {
+    while calls.len() <= index {
+        calls.push(LlmToolCall {
+            id: String::new(),
+            kind: "function".to_string(),
+            function: LlmToolFunction {
+                name: String::new(),
+                arguments: String::new(),
+            },
+        });
+    }
+    &mut calls[index]
 }
 
 fn default_tools() -> Vec<ToolDefinition> {

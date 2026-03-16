@@ -1065,6 +1065,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "cron",
+ "futures-util",
  "regex",
  "reqwest",
  "rusqlite",
