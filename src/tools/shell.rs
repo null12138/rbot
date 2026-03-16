@@ -76,7 +76,11 @@ pub async fn execute_shell(cmd: String, registry: &ToolRegistry) -> Result<ToolO
 pub(crate) fn truncate_bytes(data: &[u8], max: usize) -> String {
     let mut s = String::from_utf8_lossy(data).to_string();
     if s.len() > max {
-        s.truncate(max);
+        let mut end = max.min(s.len());
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
         s.push_str("\n...[truncated]");
     }
     s
