@@ -97,7 +97,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 map.remove(&chat_id_i64);
             }
             let progress = start_progress(&bot, chat_id).await;
-            let response = chat_with_llm(&state, chat_id_i64, &pending.input, Some(pending.max_tool_calls)).await;
+            let response = chat_with_timeout(&state, chat_id_i64, &pending.input, Some(pending.max_tool_calls)).await;
             match response {
                 Ok(ChatResult::Reply(reply)) => {
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
@@ -310,7 +310,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     // LLM chat
     state.memory.append_message(chat_id_i64, "user", text)?;
     let progress = start_progress(&bot, chat_id).await;
-    let response = chat_with_llm(&state, chat_id_i64, text, None).await;
+    let response = chat_with_timeout(&state, chat_id_i64, text, None).await;
     match response {
         Ok(ChatResult::Reply(reply)) => {
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
@@ -469,7 +469,7 @@ async fn handle_allow_command(bot: &AutoSend<Bot>, msg: &Message, state: &AppSta
 
 async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
     let message = bot
-        .send_message(chat_id, "已接收，处理中 [=   ]")
+        .send_message(chat_id, "已接收，处理中 [=   ] 0s")
         .parse_mode(ParseMode::Html)
         .await
         .ok()?;
@@ -486,16 +486,19 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
             "已接收，处理中 [==  ]",
         ];
         let mut idx = 0usize;
-        let mut ticker = time::interval(Duration::from_secs(3));
+        let start = time::Instant::now();
+        let mut ticker = time::interval(Duration::from_secs(4));
         loop {
             tokio::select! {
                 _ = &mut stop_rx => break,
                 _ = ticker.tick() => {
                     let _ = bot_clone.send_chat_action(chat_id, ChatAction::Typing).await;
                     let frame = frames[idx % frames.len()];
+                    let elapsed = start.elapsed().as_secs();
+                    let text = format!("{} {}s", frame, elapsed);
                     idx = idx.wrapping_add(1);
                     let _ = bot_clone
-                        .edit_message_text(chat_id, message_id, frame)
+                        .edit_message_text(chat_id, message_id, text)
                         .parse_mode(ParseMode::Html)
                         .await;
                 }
@@ -637,6 +640,23 @@ fn is_confirm(text: &str) -> bool {
 fn is_reject(text: &str) -> bool {
     let t = text.trim().to_lowercase();
     matches!(t.as_str(), "取消" | "算了" | "不用" | "不需要" | "no" | "n")
+}
+
+async fn chat_with_timeout(
+    state: &AppState,
+    chat_id: i64,
+    input: &str,
+    max_tool_calls_override: Option<usize>,
+) -> anyhow::Result<ChatResult> {
+    let timeout_secs = state.cfg.llm.request_timeout_secs.saturating_add(120);
+    let timeout = Duration::from_secs(timeout_secs);
+    match time::timeout(timeout, chat_with_llm(state, chat_id, input, max_tool_calls_override)).await {
+        Ok(result) => result,
+        Err(_) => Ok(ChatResult::Reply(format!(
+            "处理超时（{} 秒）。可以回复“重试”或稍后再试。",
+            timeout_secs
+        ))),
+    }
 }
 
 async fn chat_with_llm(
