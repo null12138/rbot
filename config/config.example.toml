@@ -8,7 +8,7 @@ api_key = "PUT_API_KEY_HERE"
 model = "gpt-4o-mini"
 embed_model = "text-embedding-3-small"
 request_timeout_secs = 60
-max_tool_calls = 8
+max_tool_calls = 16
 
 [memory]
 db_path = "data/agent.db"

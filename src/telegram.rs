@@ -6,10 +6,13 @@ use crate::scheduler::{ScheduledAction, Scheduler};
 use crate::skills::SkillManager;
 use crate::tools::{tmux::TmuxAction, ToolCall, ToolError, ToolRegistry};
 use chrono::Local;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
+use teloxide::types::{ChatAction, MessageId, ParseMode};
+use tokio::sync::oneshot;
+use tokio::time::{self, Duration};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,6 +23,27 @@ pub struct AppState {
     pub skills: SkillManager,
     pub llm: Option<Arc<dyn LlmClient>>,
     pub persona: String,
+    pub pending_tool_limit: PendingToolLimitMap,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingToolLimit {
+    pub input: String,
+    pub max_tool_calls: usize,
+}
+
+pub type PendingToolLimitMap = Arc<RwLock<HashMap<i64, PendingToolLimit>>>;
+
+#[derive(Debug)]
+struct ProgressHandle {
+    stop: oneshot::Sender<()>,
+    message_id: MessageId,
+}
+
+#[derive(Debug)]
+enum ChatResult {
+    Reply(String),
+    ToolLimit { max: usize, suggested: usize },
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -59,6 +83,61 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         Some(t) => t.trim(),
         None => return Ok(()),
     };
+    let chat_id = msg.chat.id;
+    let chat_id_i64 = msg.chat.id.0;
+
+    if let Some(pending) = {
+        let map = state.pending_tool_limit.read().map_err(|_| anyhow::anyhow!("pending lock"))?;
+        map.get(&chat_id_i64).cloned()
+    } {
+        if is_confirm(text) {
+            {
+                let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                map.remove(&chat_id_i64);
+            }
+            let progress = start_progress(&bot, chat_id).await;
+            let response = chat_with_llm(&state, chat_id_i64, &pending.input, Some(pending.max_tool_calls)).await;
+            match response {
+                Ok(ChatResult::Reply(reply)) => {
+                    state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+                    send_reply_with_progress(&bot, chat_id, &reply, progress, true).await?;
+                }
+                Ok(ChatResult::ToolLimit { max, suggested }) => {
+                    {
+                        let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                        map.insert(
+                            chat_id_i64,
+                            PendingToolLimit {
+                                input: pending.input,
+                                max_tool_calls: suggested,
+                            },
+                        );
+                    }
+                    let prompt = format!(
+                        "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
+                        max, suggested
+                    );
+                    send_reply_with_progress(&bot, chat_id, &prompt, progress, false).await?;
+                }
+                Err(err) => {
+                    let reply = format!("llm error: {}", err);
+                    state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+                    send_reply_with_progress(&bot, chat_id, &reply, progress, false).await?;
+                }
+            }
+            return Ok(());
+        }
+        if is_reject(text) {
+            let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+            map.remove(&chat_id_i64);
+            bot.send_message(chat_id, escape_html("已取消"))
+                .parse_mode(ParseMode::Html)
+                .await?;
+            return Ok(());
+        }
+        let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+        map.remove(&chat_id_i64);
+    }
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
         bot.send_message(msg.chat.id, escape_html("RBot 已就绪。直接提问或输入命令。"))
@@ -224,22 +303,34 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     }
 
     // LLM chat
-    state.memory.append_message(msg.chat.id.0, "user", text)?;
-    let response = chat_with_llm(&state, msg.chat.id.0, text).await;
-    let reply = match response {
-        Ok(r) => r,
-        Err(err) => format!("llm error: {}", err),
-    };
-    state.memory.append_message(msg.chat.id.0, "assistant", &reply)?;
-    let send = bot
-        .send_message(msg.chat.id, reply.clone())
-        .parse_mode(ParseMode::Html)
-        .await;
-    if let Err(_) = send {
-        let safe = escape_html(&reply);
-        bot.send_message(msg.chat.id, safe)
-            .parse_mode(ParseMode::Html)
-            .await?;
+    state.memory.append_message(chat_id_i64, "user", text)?;
+    let progress = start_progress(&bot, chat_id).await;
+    let response = chat_with_llm(&state, chat_id_i64, text, None).await;
+    match response {
+        Ok(ChatResult::Reply(reply)) => {
+            state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+            send_reply_with_progress(&bot, chat_id, &reply, progress, true).await?;
+        }
+        Ok(ChatResult::ToolLimit { max, suggested }) => {
+            let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+            map.insert(
+                chat_id_i64,
+                PendingToolLimit {
+                    input: text.to_string(),
+                    max_tool_calls: suggested,
+                },
+            );
+            let prompt = format!(
+                "工具调用已达上限 {}。回复“继续”可临时提高到 {} 并继续本次请求。",
+                max, suggested
+            );
+            send_reply_with_progress(&bot, chat_id, &prompt, progress, false).await?;
+        }
+        Err(err) => {
+            let reply = format!("llm error: {}", err);
+            state.memory.append_message(chat_id_i64, "assistant", &reply)?;
+            send_reply_with_progress(&bot, chat_id, &reply, progress, false).await?;
+        }
     }
     Ok(())
 }
@@ -371,7 +462,182 @@ async fn handle_allow_command(bot: &AutoSend<Bot>, msg: &Message, state: &AppSta
     Ok(())
 }
 
-async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::Result<String> {
+async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
+    let message = bot
+        .send_message(chat_id, "已接收，处理中 [=   ]")
+        .parse_mode(ParseMode::Html)
+        .await
+        .ok()?;
+    let (stop, mut stop_rx) = oneshot::channel::<()>();
+    let bot = bot.clone();
+    let message_id = message.id;
+    tokio::spawn(async move {
+        let frames = [
+            "已接收，处理中 [=   ]",
+            "已接收，处理中 [==  ]",
+            "已接收，处理中 [=== ]",
+            "已接收，处理中 [====]",
+            "已接收，处理中 [=== ]",
+            "已接收，处理中 [==  ]",
+        ];
+        let mut idx = 0usize;
+        let mut ticker = time::interval(Duration::from_secs(3));
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                _ = ticker.tick() => {
+                    let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+                    let frame = frames[idx % frames.len()];
+                    idx = idx.wrapping_add(1);
+                    let _ = bot.edit_message_text(chat_id, message_id, frame)
+                        .parse_mode(ParseMode::Html)
+                        .await;
+                }
+            }
+        }
+    });
+    let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+    Some(ProgressHandle {
+        stop,
+        message_id,
+    })
+}
+
+async fn send_reply_with_progress(
+    bot: &AutoSend<Bot>,
+    chat_id: ChatId,
+    reply: &str,
+    progress: Option<ProgressHandle>,
+    stream: bool,
+) -> HandlerResult {
+    if let Some(handle) = progress {
+        let _ = handle.stop.send(());
+        time::sleep(Duration::from_millis(60)).await;
+        let mut delivered = false;
+        if stream && should_stream(reply) {
+            delivered = stream_edit_message(bot, chat_id, handle.message_id, reply).await;
+        }
+        if !delivered {
+            if bot
+                .edit_message_text(chat_id, handle.message_id, reply.to_string())
+                .parse_mode(ParseMode::Html)
+                .await
+                .is_ok()
+            {
+                delivered = true;
+            }
+        }
+        if !delivered {
+            let send = bot
+                .send_message(chat_id, reply.to_string())
+                .parse_mode(ParseMode::Html)
+                .await;
+            if send.is_err() {
+                let safe = escape_html(reply);
+                bot.send_message(chat_id, safe)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+            }
+            let _ = bot.delete_message(chat_id, handle.message_id).await;
+        }
+        return Ok(());
+    }
+    let send = bot
+        .send_message(chat_id, reply.to_string())
+        .parse_mode(ParseMode::Html)
+        .await;
+    if send.is_err() {
+        let safe = escape_html(reply);
+        bot.send_message(chat_id, safe)
+            .parse_mode(ParseMode::Html)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn stream_edit_message(
+    bot: &AutoSend<Bot>,
+    chat_id: ChatId,
+    message_id: MessageId,
+    text: &str,
+) -> bool {
+    let len = text.chars().count();
+    let steps = stream_steps(len);
+    if steps == 0 {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    for step in 1..=steps {
+        let end = (len * step) / (steps + 1);
+        let partial: String = chars.iter().take(end).collect();
+        let safe = escape_html(&partial);
+        if bot
+            .edit_message_text(chat_id, message_id, safe)
+            .parse_mode(ParseMode::Html)
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        time::sleep(Duration::from_millis(140)).await;
+    }
+    bot.edit_message_text(chat_id, message_id, text.to_string())
+        .parse_mode(ParseMode::Html)
+        .await
+        .is_ok()
+}
+
+fn stream_steps(len: usize) -> usize {
+    if len < 400 {
+        0
+    } else if len < 900 {
+        2
+    } else if len < 1800 {
+        3
+    } else {
+        4
+    }
+}
+
+fn should_stream(text: &str) -> bool {
+    stream_steps(text.chars().count()) > 0
+}
+
+fn suggested_tool_limit(current: usize) -> usize {
+    current.saturating_add(8)
+}
+
+fn is_confirm(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    matches!(
+        t.as_str(),
+        "继续"
+            | "继续吧"
+            | "确认"
+            | "同意"
+            | "允许"
+            | "是"
+            | "是的"
+            | "好"
+            | "好的"
+            | "ok"
+            | "okay"
+            | "yes"
+            | "y"
+    )
+}
+
+fn is_reject(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    matches!(t.as_str(), "取消" | "算了" | "不用" | "不需要" | "no" | "n")
+}
+
+async fn chat_with_llm(
+    state: &AppState,
+    chat_id: i64,
+    input: &str,
+    max_tool_calls_override: Option<usize>,
+) -> anyhow::Result<ChatResult> {
     let llm = match &state.llm {
         Some(llm) => llm.clone(),
         None => anyhow::bail!("llm not configured"),
@@ -432,7 +698,9 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             tool_calls: None,
         });
     }
-    let max_tool_calls = state.cfg.llm.max_tool_calls.max(1);
+    let max_tool_calls = max_tool_calls_override
+        .unwrap_or(state.cfg.llm.max_tool_calls)
+        .max(1);
     let mut tool_calls_used = 0usize;
     loop {
         let reply = llm
@@ -446,10 +714,10 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             .await?;
         if !reply.tool_calls.is_empty() {
             if tool_calls_used + reply.tool_calls.len() > max_tool_calls {
-                return Ok(format!(
-                    "Tool call limit reached ({}). Increase llm.max_tool_calls in config/config.toml or refine your request.",
-                    max_tool_calls
-                ));
+                return Ok(ChatResult::ToolLimit {
+                    max: max_tool_calls,
+                    suggested: suggested_tool_limit(max_tool_calls),
+                });
             }
             tool_calls_used += reply.tool_calls.len();
             messages.push(LlmMessage {
@@ -484,10 +752,10 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
         }
         if let Some(tool_call) = parse_tool_call(&reply.content)? {
             if tool_calls_used + 1 > max_tool_calls {
-                return Ok(format!(
-                    "Tool call limit reached ({}). Increase llm.max_tool_calls in config/config.toml or refine your request.",
-                    max_tool_calls
-                ));
+                return Ok(ChatResult::ToolLimit {
+                    max: max_tool_calls,
+                    suggested: suggested_tool_limit(max_tool_calls),
+                });
             }
             tool_calls_used += 1;
             let tool_name = tool_name(&tool_call);
@@ -513,7 +781,7 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             });
             continue;
         }
-        return Ok(reply.content);
+        return Ok(ChatResult::Reply(reply.content));
     }
 }
 

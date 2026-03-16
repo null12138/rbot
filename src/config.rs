@@ -97,7 +97,7 @@ fn default_search_limit() -> usize {
 }
 
 fn default_max_tool_calls() -> usize {
-    8
+    16
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

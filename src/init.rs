@@ -65,7 +65,7 @@ pub fn run() -> anyhow::Result<()> {
                 Some(embed_model)
             },
             request_timeout_secs: 60,
-            max_tool_calls: 8,
+            max_tool_calls: 16,
         },
         memory: MemoryConfig {
             db_path: "data/agent.db".into(),

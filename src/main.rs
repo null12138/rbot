@@ -13,8 +13,9 @@ use crate::memory::MemoryStore;
 use crate::scheduler::Scheduler;
 use crate::skills::SkillManager;
 use crate::tools::{DangerGuard, ToolRegistry};
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use teloxide::net;
 use teloxide::prelude::*;
 use teloxide::RequestError;
@@ -95,6 +96,8 @@ async fn main() -> anyhow::Result<()> {
     ));
     scheduler.clone().start();
 
+    let pending_tool_limit = Arc::new(RwLock::new(HashMap::new()));
+
     let state = telegram::AppState {
         cfg,
         memory,
@@ -103,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         skills,
         llm,
         persona,
+        pending_tool_limit,
     };
 
     telegram::run_bot(bot, state).await;
