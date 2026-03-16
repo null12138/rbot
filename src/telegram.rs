@@ -521,7 +521,7 @@ async fn handle_allow_command(bot: &AutoSend<Bot>, msg: &Message, state: &AppSta
 
 async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
     let message = bot
-        .send_message(chat_id, "已接收，处理中 [=   ] 0s")
+        .send_message(chat_id, "✅ 收到啦，处理中 [=   ] 0s")
         .parse_mode(ParseMode::Html)
         .await
         .ok()?;
@@ -530,12 +530,12 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     let message_id = message.id;
     let join = tokio::spawn(async move {
         let frames = [
-            "已接收，处理中 [=   ]",
-            "已接收，处理中 [==  ]",
-            "已接收，处理中 [=== ]",
-            "已接收，处理中 [====]",
-            "已接收，处理中 [=== ]",
-            "已接收，处理中 [==  ]",
+            "✅ 收到啦，处理中 [=   ]",
+            "✅ 收到啦，处理中 [==  ]",
+            "✅ 收到啦，处理中 [=== ]",
+            "✅ 收到啦，处理中 [====]",
+            "✅ 收到啦，处理中 [=== ]",
+            "✅ 收到啦，处理中 [==  ]",
         ];
         let mut idx = 0usize;
         let start = time::Instant::now();
@@ -751,7 +751,7 @@ impl StreamEditor {
             None => {
                 let msg = ctx
                     .bot
-                    .send_message(ctx.chat_id, "处理中...")
+                    .send_message(ctx.chat_id, "✅ 收到啦，正在处理…")
                     .parse_mode(ParseMode::Html)
                     .await?;
                 msg.id
