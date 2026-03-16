@@ -7,11 +7,11 @@ use crate::skills::SkillManager;
 use crate::tools::{tmux::TmuxAction, ToolCall, ToolError, ToolRegistry};
 use chrono::Local;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MessageId, ParseMode};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
 
 #[derive(Clone)]
@@ -32,7 +32,7 @@ pub struct PendingToolLimit {
     pub max_tool_calls: usize,
 }
 
-pub type PendingToolLimitMap = Arc<RwLock<HashMap<i64, PendingToolLimit>>>;
+pub type PendingToolLimitMap = Arc<Mutex<HashMap<i64, PendingToolLimit>>>;
 
 #[derive(Debug)]
 struct ProgressHandle {
@@ -86,13 +86,14 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     let chat_id = msg.chat.id;
     let chat_id_i64 = msg.chat.id.0;
 
-    if let Some(pending) = {
-        let map = state.pending_tool_limit.read().map_err(|_| anyhow::anyhow!("pending lock"))?;
+    let pending = {
+        let map = state.pending_tool_limit.lock().await;
         map.get(&chat_id_i64).cloned()
-    } {
+    };
+    if let Some(pending) = pending {
         if is_confirm(text) {
             {
-                let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                let mut map = state.pending_tool_limit.lock().await;
                 map.remove(&chat_id_i64);
             }
             let progress = start_progress(&bot, chat_id).await;
@@ -104,7 +105,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 }
                 Ok(ChatResult::ToolLimit { max, suggested }) => {
                     {
-                        let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                        let mut map = state.pending_tool_limit.lock().await;
                         map.insert(
                             chat_id_i64,
                             PendingToolLimit {
@@ -129,7 +130,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         }
         if is_reject(text) {
             {
-                let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+                let mut map = state.pending_tool_limit.lock().await;
                 map.remove(&chat_id_i64);
             }
             bot.send_message(chat_id, escape_html("已取消"))
@@ -137,8 +138,10 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 .await?;
             return Ok(());
         }
-        let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
-        map.remove(&chat_id_i64);
+        {
+            let mut map = state.pending_tool_limit.lock().await;
+            map.remove(&chat_id_i64);
+        }
     }
 
     if text.eq_ignore_ascii_case("/start") || text.eq_ignore_ascii_case("/menu") {
@@ -314,7 +317,7 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
             send_reply_with_progress(&bot, chat_id, &reply, progress, true).await?;
         }
         Ok(ChatResult::ToolLimit { max, suggested }) => {
-            let mut map = state.pending_tool_limit.write().map_err(|_| anyhow::anyhow!("pending lock"))?;
+            let mut map = state.pending_tool_limit.lock().await;
             map.insert(
                 chat_id_i64,
                 PendingToolLimit {
@@ -514,15 +517,16 @@ async fn send_reply_with_progress(
     stream: bool,
 ) -> HandlerResult {
     if let Some(handle) = progress {
-        let _ = handle.stop.send(());
+        let ProgressHandle { stop, message_id } = handle;
+        let _ = stop.send(());
         time::sleep(Duration::from_millis(60)).await;
         let mut delivered = false;
         if stream && should_stream(reply) {
-            delivered = stream_edit_message(bot, chat_id, handle.message_id, reply).await;
+            delivered = stream_edit_message(bot, chat_id, message_id, reply).await;
         }
         if !delivered {
             if bot
-                .edit_message_text(chat_id, handle.message_id, reply.to_string())
+                .edit_message_text(chat_id, message_id, reply.to_string())
                 .parse_mode(ParseMode::Html)
                 .await
                 .is_ok()
@@ -541,7 +545,7 @@ async fn send_reply_with_progress(
                     .parse_mode(ParseMode::Html)
                     .await?;
             }
-            let _ = bot.delete_message(chat_id, handle.message_id).await;
+            let _ = bot.delete_message(chat_id, message_id).await;
         }
         return Ok(());
     }

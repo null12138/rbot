@@ -15,7 +15,8 @@ use crate::skills::SkillManager;
 use crate::tools::{DangerGuard, ToolRegistry};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use teloxide::net;
 use teloxide::prelude::*;
 use teloxide::RequestError;
@@ -96,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     scheduler.clone().start();
 
-    let pending_tool_limit = Arc::new(RwLock::new(HashMap::new()));
+    let pending_tool_limit = Arc::new(Mutex::new(HashMap::new()));
 
     let state = telegram::AppState {
         cfg,
