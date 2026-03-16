@@ -63,6 +63,7 @@ struct StreamEditor {
     bot: AutoSend<Bot>,
     chat_id: ChatId,
     message_id: MessageId,
+    created_at: Instant,
     last_edit: Instant,
     last_len: usize,
     min_interval: Duration,
@@ -755,6 +756,7 @@ impl StreamEditor {
             bot: ctx.bot.clone(),
             chat_id: ctx.chat_id,
             message_id,
+            created_at: now,
             // Allow the first partial update to land immediately.
             last_edit: now - Duration::from_millis(900),
             last_len: 0,
@@ -787,11 +789,28 @@ impl StreamEditor {
         let now = Instant::now();
         if now.duration_since(self.last_typing) >= Duration::from_secs(4) {
             let _ = self.bot.send_chat_action(self.chat_id, ChatAction::Typing).await;
-            self.last_typing = now;
+        self.last_typing = now;
         }
         let delta = content.len().saturating_sub(self.last_len);
-        let min_chars = if content.len() < 200 { 16 } else { self.min_chars };
-        if now.duration_since(self.last_edit) < self.min_interval && delta < min_chars {
+        let elapsed = now.duration_since(self.created_at);
+        let burst_interval = if elapsed < Duration::from_secs(2) {
+            Duration::from_millis(200)
+        } else if elapsed < Duration::from_secs(5) {
+            Duration::from_millis(350)
+        } else {
+            self.min_interval
+        };
+        let interval = self.min_interval.max(burst_interval);
+        let min_chars = if elapsed < Duration::from_secs(2) {
+            8
+        } else if elapsed < Duration::from_secs(5) {
+            16
+        } else if content.len() < 200 {
+            16
+        } else {
+            self.min_chars
+        };
+        if now.duration_since(self.last_edit) < interval && delta < min_chars {
             return;
         }
         let mut safe = escape_html(content);
