@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 pub mod http;
+pub mod pdf;
 pub mod search;
 pub mod shell;
 pub mod tmux;
@@ -14,6 +15,7 @@ pub enum ToolCall {
     Shell { cmd: String },
     Http { method: String, url: String, body: Option<String> },
     Search { query: String, count: Option<usize> },
+    Pdf { path: String, max_chars: Option<usize> },
     Tmux { action: tmux::TmuxAction },
 }
 
@@ -147,6 +149,7 @@ impl ToolRegistry {
             ToolCall::Search { query, count } => {
                 search::execute_search(query, count, self).await
             }
+            ToolCall::Pdf { path, max_chars } => pdf::extract_pdf_text(path, max_chars).await,
             ToolCall::Tmux { action } => tmux::execute_tmux(action, self).await,
         }
     }

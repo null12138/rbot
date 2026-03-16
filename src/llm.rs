@@ -468,6 +468,21 @@ fn default_tools() -> Vec<ToolDefinition> {
         ToolDefinition {
             kind: "function".to_string(),
             function: ToolSpec {
+                name: "pdf".to_string(),
+                description: "Extract text from a local PDF file.".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Local PDF file path"},
+                        "max_chars": {"type": "integer", "description": "Maximum characters to return (optional)"}
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            kind: "function".to_string(),
+            function: ToolSpec {
                 name: "tmux".to_string(),
                 description: "Control tmux: start/stop/logs/list.".to_string(),
                 parameters: json!({

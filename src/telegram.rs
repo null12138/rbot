@@ -835,7 +835,7 @@ async fn chat_with_llm(
     messages.push(LlmMessage {
         role: "system".into(),
         content: format!(
-            "Persona:\n{}\n\nRules:\n- You can use tools (shell/http/tmux/search) proactively to achieve the goal.\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- If dependencies or helpers are missing, attempt to install or work around using tools; only ask if a tool is blocked.\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For real-time or web data, attempt search/http tool calls; do not claim you cannot access the network unless a tool error explicitly says so.\n- If a tool call fails, surface the exact error and give a concrete config fix (e.g., enable tools.http.allow_all or set tools.search.api_key).\n- Minimize clarifying questions. When the request is ambiguous, choose a reasonable default and include brief alternatives (e.g., for 'today oil price' provide WTI + Brent) instead of asking.\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Use official tool calls when tools are needed.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
+            "Persona:\n{}\n\nRules:\n- You can use tools (shell/http/tmux/search/pdf) proactively to achieve the goal.\n- If the user asks about local state you can check (time/IP/files/processes/ports), use tools directly; do not ask the user to run commands you can run.\n- For safe read-only actions, assume permission unless the user forbids it.\n- Avoid installing new dependencies unless the user explicitly asks. Prefer built-in tools (e.g., use the pdf tool for PDF parsing).\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For real-time or web data, attempt search/http tool calls; do not claim you cannot access the network unless a tool error explicitly says so.\n- If a tool call fails, surface the exact error and give a concrete config fix (e.g., enable tools.http.allow_all or set tools.search.api_key).\n- Minimize clarifying questions. When the request is ambiguous, choose a reasonable default and include brief alternatives (e.g., for 'today oil price' provide WTI + Brent) instead of asking.\n- Maintain multi-turn context: track the user's goal, use memory, ask only necessary clarifying questions, and propose a next step when helpful.\n- Use official tool calls when tools are needed.\n- Format responses for Telegram HTML parse mode; use only supported tags (e.g., <b>, <i>, <code>, <pre>, <a>) and escape <, >, & in text.\n- Otherwise, respond normally.\n- Be concise and practical.",
             state.persona
         ),
         tool_call_id: None,
@@ -1144,6 +1144,7 @@ fn tool_name(call: &ToolCall) -> &'static str {
         ToolCall::Shell { .. } => "shell",
         ToolCall::Http { .. } => "http",
         ToolCall::Search { .. } => "search",
+        ToolCall::Pdf { .. } => "pdf",
         ToolCall::Tmux { .. } => "tmux",
     }
 }
@@ -1169,6 +1170,7 @@ fn tool_enable_hint(tool: &str) -> &'static str {
         "shell" => "use /allow shell <command> OR set tools.shell.allow_all = true OR add to tools.shell.allowlist.",
         "tmux" => "use /allow tmux <command> OR set tools.tmux.allow_all = true OR add to tools.tmux.allowlist.",
         "search" => "set tools.search.api_key (Tavily) in config/config.toml; endpoint optional.",
+        "pdf" => "ensure the PDF file path is accessible on disk.",
         _ => "update tool allowlist in config/config.toml.",
     }
 }
@@ -1228,6 +1230,15 @@ fn parse_tool_call(text: &str) -> anyhow::Result<Option<ToolCall>> {
             let action = parse_tmux_action(args)?;
             Ok(Some(ToolCall::Tmux { action }))
         }
+        "pdf" => {
+            if args.is_empty() {
+                anyhow::bail!("pdf args missing");
+            }
+            Ok(Some(ToolCall::Pdf {
+                path: args.to_string(),
+                max_chars: None,
+            }))
+        }
         _ => Ok(None),
     }
 }
@@ -1282,6 +1293,18 @@ fn tool_call_from_llm(call: &LlmToolCall) -> anyhow::Result<ToolCall> {
             let parsed: TmuxArgs = serde_json::from_str(args)?;
             let action = parse_tmux_action(&parsed.action)?;
             Ok(ToolCall::Tmux { action })
+        }
+        "pdf" => {
+            #[derive(Deserialize)]
+            struct PdfArgs {
+                path: String,
+                max_chars: Option<usize>,
+            }
+            let parsed: PdfArgs = serde_json::from_str(args)?;
+            Ok(ToolCall::Pdf {
+                path: parsed.path,
+                max_chars: parsed.max_chars,
+            })
         }
         _ => anyhow::bail!("unknown tool: {}", name),
     }
