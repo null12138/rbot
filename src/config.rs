@@ -35,6 +35,8 @@ pub struct LlmConfig {
     pub model: String,
     pub embed_model: Option<String>,
     pub request_timeout_secs: u64,
+    #[serde(default = "default_max_tool_calls")]
+    pub max_tool_calls: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +94,10 @@ pub struct SearchToolConfig {
 
 fn default_search_limit() -> usize {
     5
+}
+
+fn default_max_tool_calls() -> usize {
+    8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

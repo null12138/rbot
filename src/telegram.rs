@@ -432,9 +432,9 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             tool_calls: None,
         });
     }
-    let mut attempts = 0;
+    let max_tool_calls = state.cfg.llm.max_tool_calls.max(1);
+    let mut tool_calls_used = 0usize;
     loop {
-        attempts += 1;
         let reply = llm
             .chat(
                 messages.clone(),
@@ -445,6 +445,13 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
             )
             .await?;
         if !reply.tool_calls.is_empty() {
+            if tool_calls_used + reply.tool_calls.len() > max_tool_calls {
+                return Ok(format!(
+                    "Tool call limit reached ({}). Increase llm.max_tool_calls in config/config.toml or refine your request.",
+                    max_tool_calls
+                ));
+            }
+            tool_calls_used += reply.tool_calls.len();
             messages.push(LlmMessage {
                 role: "assistant".into(),
                 content: reply.content.clone(),
@@ -473,12 +480,16 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
                     tool_calls: None,
                 });
             }
-            if attempts >= 4 {
-                return Ok("Tool call limit reached. Please refine your request.".to_string());
-            }
             continue;
         }
         if let Some(tool_call) = parse_tool_call(&reply.content)? {
+            if tool_calls_used + 1 > max_tool_calls {
+                return Ok(format!(
+                    "Tool call limit reached ({}). Increase llm.max_tool_calls in config/config.toml or refine your request.",
+                    max_tool_calls
+                ));
+            }
+            tool_calls_used += 1;
             let tool_name = tool_name(&tool_call);
             let tool_result = match state.tools.execute(tool_call).await {
                 Ok(out) => format!(
@@ -500,9 +511,6 @@ async fn chat_with_llm(state: &AppState, chat_id: i64, input: &str) -> anyhow::R
                 tool_call_id: None,
                 tool_calls: None,
             });
-            if attempts >= 4 {
-                return Ok("Tool call limit reached. Please refine your request.".to_string());
-            }
             continue;
         }
         return Ok(reply.content);
