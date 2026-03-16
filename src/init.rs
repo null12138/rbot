@@ -14,9 +14,8 @@ pub fn run() -> anyhow::Result<()> {
     let sleep_time = prompt("Sleep time (HH:MM)", Some("02:30".into()))?;
     let timezone = prompt("Timezone", Some("Asia/Shanghai".into()))?;
     let heartbeat = prompt("Heartbeat interval secs", Some("60".into()))?;
-    let search_provider = prompt("Search provider (brave/searxng)", Some("brave".into()))?;
-    let search_api_key = prompt("Search api_key (optional)", Some("".into()))?;
-    let search_endpoint = prompt("Search endpoint (optional)", Some("".into()))?;
+    let search_api_key = prompt("Tavily api_key (optional)", Some("".into()))?;
+    let search_endpoint = prompt("Tavily endpoint (optional)", Some("".into()))?;
     let search_limit = prompt("Search result limit", Some("5".into()))?;
 
     let allowlist_shell = vec!["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
@@ -90,7 +89,6 @@ pub fn run() -> anyhow::Result<()> {
                 allow_all: true,
             },
             search: SearchToolConfig {
-                provider: search_provider,
                 api_key: if search_api_key.trim().is_empty() {
                     None
                 } else {

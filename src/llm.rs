@@ -252,7 +252,7 @@ fn default_tools() -> Vec<ToolDefinition> {
             kind: "function".to_string(),
             function: ToolSpec {
                 name: "search".to_string(),
-                description: "Search the web and return top results.".to_string(),
+                description: "Search the web (Tavily) and return top results.".to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {

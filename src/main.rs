@@ -51,7 +51,6 @@ async fn main() -> anyhow::Result<()> {
         cfg.tools.tmux.allowlist.clone(),
         cfg.tools.http.allowed_domains.clone(),
         proxy_for_clients.clone(),
-        cfg.tools.search.provider.clone(),
         cfg.tools.search.api_key.clone(),
         cfg.tools.search.endpoint.clone(),
         cfg.tools.search.limit,

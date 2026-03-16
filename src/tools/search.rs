@@ -1,6 +1,6 @@
 use crate::tools::{ToolError, ToolOutput, ToolRegistry};
 use reqwest::{Client, Proxy};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 pub async fn execute_search(
@@ -9,18 +9,8 @@ pub async fn execute_search(
     registry: &ToolRegistry,
 ) -> Result<ToolOutput, ToolError> {
     let limit = count.unwrap_or(registry.search_limit).max(1).min(10);
-    let provider = registry.search_provider.trim().to_lowercase();
     let http = build_client(registry)?;
-    let output = match provider.as_str() {
-        "brave" => search_brave(&http, &query, limit, registry).await?,
-        "searxng" => search_searxng(&http, &query, limit, registry).await?,
-        _ => {
-            return Err(ToolError::InvalidInput(format!(
-                "unknown search provider: {}",
-                provider
-            )))
-        }
-    };
+    let output = search_tavily(&http, &query, limit, registry).await?;
     Ok(ToolOutput {
         stdout: output,
         stderr: String::new(),
@@ -42,59 +32,33 @@ fn build_client(registry: &ToolRegistry) -> Result<Client, ToolError> {
     builder.build().map_err(|e| ToolError::Execution(e.to_string()))
 }
 
-async fn search_brave(
+async fn search_tavily(
     http: &Client,
     query: &str,
     limit: usize,
     registry: &ToolRegistry,
 ) -> Result<String, ToolError> {
+    let endpoint = registry
+        .search_endpoint
+        .clone()
+        .unwrap_or_else(|| "https://api.tavily.com/search".to_string());
     let api_key = registry
         .search_api_key
         .as_ref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| ToolError::InvalidInput("search api_key missing (tools.search.api_key)".into()))?;
-    let endpoint = registry
-        .search_endpoint
-        .clone()
-        .unwrap_or_else(|| "https://api.search.brave.com/res/v1/web/search".to_string());
+    let payload = json!({
+        "api_key": api_key,
+        "query": query,
+        "max_results": limit,
+        "search_depth": "basic",
+        "include_answer": false,
+        "include_raw_content": false
+    });
     let resp = http
-        .get(endpoint)
-        .header("X-Subscription-Token", api_key)
-        .query(&[("q", query), ("count", &limit.to_string())])
-        .send()
-        .await
-        .map_err(|e| ToolError::Execution(e.to_string()))?
-        .error_for_status()
-        .map_err(|e| ToolError::Execution(e.to_string()))?;
-    let value: Value = resp
-        .json()
-        .await
-        .map_err(|e| ToolError::Execution(e.to_string()))?;
-    let results = value
-        .get("web")
-        .and_then(|w| w.get("results"))
-        .and_then(|r| r.as_array())
-        .cloned()
-        .unwrap_or_default();
-    Ok(format_results(&results))
-}
-
-async fn search_searxng(
-    http: &Client,
-    query: &str,
-    limit: usize,
-    registry: &ToolRegistry,
-) -> Result<String, ToolError> {
-    let endpoint = registry
-        .search_endpoint
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| ToolError::InvalidInput("search endpoint missing (tools.search.endpoint)".into()))?;
-    let resp = http
-        .get(endpoint)
-        .query(&[("q", query), ("format", "json"), ("count", &limit.to_string())])
+        .post(endpoint)
+        .json(&payload)
         .send()
         .await
         .map_err(|e| ToolError::Execution(e.to_string()))?
@@ -128,7 +92,8 @@ fn format_results(results: &[Value]) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let snippet = item
-            .get("description")
+            .get("content")
+            .or_else(|| item.get("description"))
             .or_else(|| item.get("snippet"))
             .and_then(|v| v.as_str())
             .unwrap_or("");

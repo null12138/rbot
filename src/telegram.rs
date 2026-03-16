@@ -670,7 +670,7 @@ fn tool_enable_hint(tool: &str) -> &'static str {
         "http" => "set tools.http.allow_all = true OR add domain to tools.http.allowed_domains in config/config.toml.",
         "shell" => "use /allow shell <command> OR set tools.shell.allow_all = true OR add to tools.shell.allowlist.",
         "tmux" => "use /allow tmux <command> OR set tools.tmux.allow_all = true OR add to tools.tmux.allowlist.",
-        "search" => "set tools.search.provider + api_key/endpoint in config/config.toml (e.g. brave requires api_key; searxng requires endpoint).",
+        "search" => "set tools.search.api_key (Tavily) in config/config.toml; endpoint optional.",
         _ => "update tool allowlist in config/config.toml.",
     }
 }

@@ -31,11 +31,9 @@ allow_all = true
 allowed_domains = ["api.github.com", "api.openai.com"]
 
 [tools.search]
-# provider: "brave" or "searxng"
-provider = "brave"
-# brave requires api_key; searxng can be public/self-hosted
+# Tavily search
 api_key = ""
-# optional override endpoint
+# optional override endpoint (default: https://api.tavily.com/search)
 endpoint = ""
 # default result limit
 limit = 5
