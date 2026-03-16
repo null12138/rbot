@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::llm::{ChatOptions, LlmClient, LlmMessage, LlmToolCall, StreamEvent, LlmResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use crate::memory::{local_day_string, MemoryStore, StoredMessage};
 use crate::scheduler::{ScheduledAction, Scheduler};
 use crate::skills::SkillManager;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MessageId, ParseMode};
+use reqwest::{Client, Proxy};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
 
@@ -108,6 +109,8 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
     };
     let chat_id = msg.chat.id;
     let chat_id_i64 = msg.chat.id.0;
+
+    let _ = try_like_message(&state, &msg).await;
 
     let pending = {
         let map = state.pending_tool_limit.lock().await;
@@ -521,9 +524,54 @@ async fn handle_allow_command(bot: &AutoSend<Bot>, msg: &Message, state: &AppSta
     Ok(())
 }
 
+#[derive(Serialize)]
+struct ReactionType {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    emoji: String,
+}
+
+#[derive(Serialize)]
+struct SetMessageReactionPayload {
+    chat_id: i64,
+    message_id: i32,
+    reaction: Vec<ReactionType>,
+}
+
+async fn try_like_message(state: &AppState, msg: &Message) -> Option<()> {
+    let token = state.cfg.telegram.token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let url = format!("https://api.telegram.org/bot{}/setMessageReaction", token);
+    let mut builder = Client::builder().no_proxy();
+    if let Some(proxy_url) = state
+        .cfg
+        .network
+        .proxy_url
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let proxy = Proxy::all(proxy_url).ok()?;
+        builder = builder.proxy(proxy);
+    }
+    let client = builder.build().ok()?;
+    let payload = SetMessageReactionPayload {
+        chat_id: msg.chat.id.0,
+        message_id: msg.id.0,
+        reaction: vec![ReactionType {
+            kind: "emoji",
+            emoji: "👍".to_string(),
+        }],
+    };
+    let _ = client.post(url).json(&payload).send().await;
+    Some(())
+}
+
 async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
     let message = bot
-        .send_message(chat_id, "✅ 收到啦，处理中 [=   ] 0s")
+        .send_message(chat_id, "☁️☁️☁️～ [=   ] 0s")
         .parse_mode(ParseMode::Html)
         .await
         .ok()?;
@@ -532,12 +580,12 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     let message_id = message.id;
     let join = tokio::spawn(async move {
         let frames = [
-            "✅ 收到啦，处理中 [=   ]",
-            "✅ 收到啦，处理中 [==  ]",
-            "✅ 收到啦，处理中 [=== ]",
-            "✅ 收到啦，处理中 [====]",
-            "✅ 收到啦，处理中 [=== ]",
-            "✅ 收到啦，处理中 [==  ]",
+            "☁️☁️☁️～ [=   ]",
+            "☁️☁️☁️～ [==  ]",
+            "☁️☁️☁️～ [=== ]",
+            "☁️☁️☁️～ [====]",
+            "☁️☁️☁️～ [=== ]",
+            "☁️☁️☁️～ [==  ]",
         ];
         let mut idx = 0usize;
         let start = time::Instant::now();
@@ -753,7 +801,7 @@ impl StreamEditor {
             None => {
                 let msg = ctx
                     .bot
-                    .send_message(ctx.chat_id, "✅ 收到啦，正在处理…")
+                    .send_message(ctx.chat_id, "☁️☁️☁️～")
                     .parse_mode(ParseMode::Html)
                     .await?;
                 msg.id
