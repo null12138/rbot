@@ -571,7 +571,7 @@ async fn try_like_message(state: &AppState, msg: &Message) -> Option<()> {
 
 async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<ProgressHandle> {
     let message = bot
-        .send_message(chat_id, "☁️☁️☁️～ [=   ] 0s")
+        .send_message(chat_id, "☁️☁️☁️～ [=   ]")
         .parse_mode(ParseMode::Html)
         .await
         .ok()?;
@@ -588,7 +588,6 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
             "☁️☁️☁️～ [==  ]",
         ];
         let mut idx = 0usize;
-        let start = time::Instant::now();
         let mut ticker = time::interval(Duration::from_secs(4));
         loop {
             tokio::select! {
@@ -596,11 +595,9 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
                 _ = ticker.tick() => {
                     let _ = bot_clone.send_chat_action(chat_id, ChatAction::Typing).await;
                     let frame = frames[idx % frames.len()];
-                    let elapsed = start.elapsed().as_secs();
-                    let text = format!("{} {}s", frame, elapsed);
                     idx = idx.wrapping_add(1);
                     let _ = bot_clone
-                        .edit_message_text(chat_id, message_id, text)
+                        .edit_message_text(chat_id, message_id, frame)
                         .parse_mode(ParseMode::Html)
                         .await;
                 }
