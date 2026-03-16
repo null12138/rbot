@@ -37,6 +37,7 @@ pub type PendingToolLimitMap = Arc<Mutex<HashMap<i64, PendingToolLimit>>>;
 #[derive(Debug)]
 struct ProgressHandle {
     stop: oneshot::Sender<()>,
+    join: tokio::task::JoinHandle<()>,
     message_id: MessageId,
 }
 
@@ -476,7 +477,7 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     let (stop, mut stop_rx) = oneshot::channel::<()>();
     let bot_clone = bot.clone();
     let message_id = message.id;
-    tokio::spawn(async move {
+    let join = tokio::spawn(async move {
         let frames = [
             "已接收，处理中 [=   ]",
             "已接收，处理中 [==  ]",
@@ -508,6 +509,7 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
     Some(ProgressHandle {
         stop,
+        join,
         message_id,
     })
 }
@@ -520,9 +522,11 @@ async fn send_reply_with_progress(
     stream: bool,
 ) -> HandlerResult {
     if let Some(handle) = progress {
-        let ProgressHandle { stop, message_id } = handle;
+        let ProgressHandle { stop, join, message_id } = handle;
         let _ = stop.send(());
-        time::sleep(Duration::from_millis(60)).await;
+        join.abort();
+        let _ = time::timeout(Duration::from_millis(200), join).await;
+        time::sleep(Duration::from_millis(40)).await;
         let mut delivered = false;
         if stream && should_stream(reply) {
             delivered = stream_edit_message(bot, chat_id, message_id, reply).await;
