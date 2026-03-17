@@ -1,0 +1,72 @@
+[telegram]
+token = "PUT_TELEGRAM_BOT_TOKEN_HERE"
+admin_user_ids = [123456789]
+
+[llm]
+base_url = "https://api.openai.com"
+api_key = "PUT_API_KEY_HERE"
+model = "gpt-4o-mini"
+embed_model = "text-embedding-3-small"
+request_timeout_secs = 60
+overall_timeout_secs = 600
+max_tool_calls = 16
+
+[memory]
+db_path = "data/agent.db"
+base_dir = "memory"
+short_term_limit = 16
+sleep_time = "02:30"
+timezone = "Asia/Shanghai"
+
+[tools.shell]
+mode = "blocklist" # allowlist | blocklist
+allow_all = false  # ignored in blocklist mode
+allow_meta = false
+use_shell = false
+allowlist = ["ls", "rg", "git", "cargo", "cat", "pwd", "whoami"]
+blocklist = ["rm", "sudo", "shutdown", "reboot", "mkfs", "dd"]
+
+[tools.tmux]
+allow_all = false
+allowlist = ["new-session", "list-sessions", "kill-session", "capture-pane", "send-keys"]
+
+[tools.http]
+allow_all = true
+allowed_domains = ["api.github.com", "api.openai.com"]
+
+[tools.search]
+# Tavily search
+api_key = ""
+# optional override endpoint (default: https://api.tavily.com/search)
+endpoint = ""
+# default result limit
+limit = 5
+
+[security]
+# regex patterns; if matched, block execution
+# keep minimal and extend as needed
+danger_patterns = [
+  "rm\\s+-rf",
+  "mkfs",
+  "dd\\s+if=",
+  ":\\(\\)\\{\\s*:\\|:\\s*&\\};:",
+  "shutdown",
+  "reboot"
+]
+
+[scheduler]
+heartbeat_interval_secs = 60
+
+[skills]
+dir = "skills"
+
+[network]
+# Optional proxy for Telegram/LLM/HTTP tools, e.g. "http://127.0.0.1:7890"
+proxy_url = ""
+
+[render.latex]
+enabled = true
+inline = true
+max_inline = 6
+base_url = "https://latex.codecogs.com/png.latex"
+dpi = 150

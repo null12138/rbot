@@ -66,8 +66,9 @@ rbot
 - `RBOT_KEEP_CONFIG` (set to keep config/data when uninstalling)
 
 **Config**
-Path: `~/.rbot/config/config.toml`  
-Run the TUI config wizard any time with `rbot init`.
+- Default: `~/.rbot/config/config.toml`
+- Local override: `~/.rbot/config/config.local.toml` (takes precedence; keep secrets here)
+- Run the TUI config wizard any time with `rbot init` (writes `config.local.toml`).
 
 **Scheduling**
 - Recurring: `rbot_*` cron (seconds supported).
@@ -90,8 +91,8 @@ limit = 5
 ```
 
 **Build From Source**
-1. `cargo run -- init`
-2. (Optional) copy `config/config.example.toml` -> `config/config.toml`
+1. `cargo run -- init` (writes `config/config.local.toml`)
+2. (Optional) copy `config/config.example.toml` -> `config/config.toml` for shared defaults
 3. `cargo run`
 
 **Troubleshooting**
@@ -167,8 +168,9 @@ rbot
 - `RBOT_KEEP_CONFIG`（卸载时保留配置/数据）
 
 **配置**
-路径：`~/.rbot/config/config.toml`  
-可随时执行 `rbot init` 重新生成/编辑。
+- 默认：`~/.rbot/config/config.toml`
+- 本地覆盖：`~/.rbot/config/config.local.toml`（优先读取，建议放敏感信息）
+- 可随时执行 `rbot init` 重新生成/编辑（写入 `config.local.toml`）。
 
 **定时**
 - 循环：`rbot_*` cron（支持秒）
@@ -192,8 +194,8 @@ limit = 5
 ```
 
 **源码构建**
-1. `cargo run -- init`
-2. （可选）复制 `config/config.example.toml` -> `config/config.toml`
+1. `cargo run -- init`（写入 `config/config.local.toml`）
+2. （可选）复制 `config/config.example.toml` -> `config/config.toml` 作为共享默认
 3. `cargo run`
 
 **常见问题**

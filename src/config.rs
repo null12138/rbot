@@ -178,9 +178,15 @@ pub struct SkillsConfig {
 impl Config {
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.unwrap_or_else(|| {
-            std::env::var("RBOT_CONFIG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("config/config.toml"))
+            if let Ok(path) = std::env::var("RBOT_CONFIG") {
+                return PathBuf::from(path);
+            }
+            let local = PathBuf::from("config/config.local.toml");
+            if local.exists() {
+                local
+            } else {
+                PathBuf::from("config/config.toml")
+            }
         });
         let text = fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read config at {:?}: {}", path, e))?;

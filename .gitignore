@@ -3,7 +3,7 @@
 **/*.rs.bk
 
 # Local config & secrets
-/config/config.toml
+/config/config.local.toml
 *.env
 
 # Runtime data

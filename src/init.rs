@@ -151,7 +151,7 @@ pub fn run() -> anyhow::Result<()> {
         network: NetworkConfig::default(),
     };
 
-    let path = Path::new("config/config.toml");
+    let path = Path::new("config/config.local.toml");
     cfg.save(path)?;
     println!("Wrote config to {}", path.display());
     Ok(())
