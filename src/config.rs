@@ -12,6 +12,8 @@ pub struct Config {
     pub scheduler: SchedulerConfig,
     pub skills: SkillsConfig,
     #[serde(default)]
+    pub render: RenderConfig,
+    #[serde(default)]
     pub network: NetworkConfig,
 }
 
@@ -26,6 +28,38 @@ pub struct TelegramConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkConfig {
     pub proxy_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RenderConfig {
+    #[serde(default)]
+    pub latex: LatexRenderConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatexRenderConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub inline: bool,
+    #[serde(default = "default_latex_max_inline")]
+    pub max_inline: usize,
+    #[serde(default = "default_latex_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_latex_dpi")]
+    pub dpi: u32,
+}
+
+impl Default for LatexRenderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            inline: default_true(),
+            max_inline: default_latex_max_inline(),
+            base_url: default_latex_base_url(),
+            dpi: default_latex_dpi(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +134,22 @@ pub struct SearchToolConfig {
 
 fn default_search_limit() -> usize {
     5
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_latex_max_inline() -> usize {
+    6
+}
+
+fn default_latex_base_url() -> String {
+    "https://latex.codecogs.com/png.latex".to_string()
+}
+
+fn default_latex_dpi() -> u32 {
+    150
 }
 
 fn default_max_tool_calls() -> usize {

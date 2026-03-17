@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, LatexRenderConfig};
 use crate::llm::{ChatOptions, LlmClient, LlmMessage, LlmToolCall, StreamEvent, LlmResponse};
 use serde::{Deserialize, Serialize};
 use crate::memory::{local_day_string, MemoryStore, StoredMessage};
@@ -14,12 +14,13 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use teloxide::dispatching::dialogue::{Dialogue, InMemStorage};
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{CallbackQuery, ChatAction, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
 use teloxide::{RequestError};
 use teloxide::errors::ApiError;
-use reqwest::{Client, Proxy};
+use reqwest::{Client, Proxy, Url};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::{self, Duration};
+use url::form_urlencoded::byte_serialize;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -157,7 +158,16 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 Ok(ChatResult::Reply(reply)) => {
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &reply,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
+                    .await?;
                 }
                 Ok(ChatResult::ToolLimit { max, suggested }) => {
                     {
@@ -175,13 +185,31 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                         max, suggested
                     );
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &prompt,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
+                    .await?;
                 }
                 Err(err) => {
                     let reply = format!("llm error: {}", err);
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &reply,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
+                    .await?;
                 }
             }
             return Ok(());
@@ -379,7 +407,16 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
         Ok(ChatResult::Reply(reply)) => {
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &reply,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
         Ok(ChatResult::ToolLimit { max, suggested }) => {
             {
@@ -397,13 +434,31 @@ async fn handle_idle(bot: AutoSend<Bot>, msg: Message, dialogue: MyDialogue, sta
                 max, suggested
             );
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &prompt,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
         Err(err) => {
             let reply = format!("llm error: {}", err);
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &reply,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -461,7 +516,15 @@ async fn handle_callback(bot: AutoSend<Bot>, q: CallbackQuery, state: AppState) 
                 Ok(ChatResult::Reply(reply)) => {
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false)
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &reply,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
                         .await?;
                 }
                 Ok(ChatResult::ToolLimit { max, suggested }) => {
@@ -480,14 +543,30 @@ async fn handle_callback(bot: AutoSend<Bot>, q: CallbackQuery, state: AppState) 
                         max, suggested
                     );
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false)
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &prompt,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
                         .await?;
                 }
                 Err(err) => {
                     let reply = format!("llm error: {}", err);
                     state.memory.append_message(chat_id_i64, "assistant", &reply)?;
                     let progress_handle = progress_state.lock().await.take();
-                    send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false)
+                    send_reply_with_progress(
+                        &bot,
+                        chat_id,
+                        &reply,
+                        progress_handle,
+                        message_id,
+                        false,
+                        &state.cfg.render.latex,
+                    )
                         .await?;
                 }
             }
@@ -522,7 +601,16 @@ async fn handle_callback(bot: AutoSend<Bot>, q: CallbackQuery, state: AppState) 
         Ok(ChatResult::Reply(reply)) => {
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &reply,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
         Ok(ChatResult::ToolLimit { max, suggested }) => {
             {
@@ -540,13 +628,31 @@ async fn handle_callback(bot: AutoSend<Bot>, q: CallbackQuery, state: AppState) 
                 max, suggested
             );
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &prompt, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &prompt,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
         Err(err) => {
             let reply = format!("llm error: {}", err);
             state.memory.append_message(chat_id_i64, "assistant", &reply)?;
             let progress_handle = progress_state.lock().await.take();
-            send_reply_with_progress(&bot, chat_id, &reply, progress_handle, message_id, false).await?;
+            send_reply_with_progress(
+                &bot,
+                chat_id,
+                &reply,
+                progress_handle,
+                message_id,
+                false,
+                &state.cfg.render.latex,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -752,6 +858,256 @@ async fn start_progress(bot: &AutoSend<Bot>, chat_id: ChatId) -> Option<Progress
     })
 }
 
+#[derive(Debug, Clone)]
+struct LatexFormula {
+    source: String,
+    display: bool,
+}
+
+#[derive(Debug, Clone)]
+struct LatexRenderResult {
+    text: String,
+    formulas: Vec<LatexFormula>,
+}
+
+fn prepare_latex_render(reply: &str, cfg: &LatexRenderConfig) -> Option<LatexRenderResult> {
+    if !cfg.enabled {
+        return None;
+    }
+    let mut out = String::with_capacity(reply.len());
+    let mut formulas = Vec::new();
+    let mut inline_count = 0;
+    let inline_limit = if cfg.inline { cfg.max_inline } else { 0 };
+    let chars: Vec<(usize, char)> = reply.char_indices().collect();
+    let mut idx = 0;
+    let mut last_byte = 0;
+    let reply_len = reply.len();
+    let byte_after = |i: usize| -> usize {
+        if i + 1 < chars.len() {
+            chars[i + 1].0
+        } else {
+            reply_len
+        }
+    };
+
+    while idx < chars.len() {
+        let (byte_pos, ch) = chars[idx];
+        if ch == '$' {
+            if idx + 1 < chars.len()
+                && chars[idx + 1].1 == '$'
+                && !is_escaped_char(&chars, idx)
+            {
+                if let Some(close_idx) = find_closing_dollar_pair(&chars, idx + 2) {
+                    out.push_str(&reply[last_byte..byte_pos]);
+                    let content_start = byte_after(idx + 1);
+                    let content_end = chars[close_idx].0;
+                    let content = reply[content_start..content_end].trim();
+                    if !content.is_empty() {
+                        formulas.push(LatexFormula {
+                            source: content.to_string(),
+                            display: true,
+                        });
+                        out.push_str(&format!("【公式{}】", formulas.len()));
+                    } else {
+                        let after_close = byte_after(close_idx + 1);
+                        out.push_str(&reply[byte_pos..after_close]);
+                    }
+                    idx = close_idx + 2;
+                    last_byte = byte_after(close_idx + 1);
+                    continue;
+                }
+            } else if inline_count < inline_limit && !is_escaped_char(&chars, idx) {
+                if let Some(close_idx) = find_closing_single_dollar(&chars, idx + 1) {
+                    out.push_str(&reply[last_byte..byte_pos]);
+                    let content_start = byte_after(idx);
+                    let content_end = chars[close_idx].0;
+                    let content = reply[content_start..content_end].trim();
+                    if !content.is_empty() {
+                        formulas.push(LatexFormula {
+                            source: content.to_string(),
+                            display: false,
+                        });
+                        inline_count += 1;
+                        out.push_str(&format!("【公式{}】", formulas.len()));
+                    } else {
+                        let after_close = byte_after(close_idx);
+                        out.push_str(&reply[byte_pos..after_close]);
+                    }
+                    idx = close_idx + 1;
+                    last_byte = byte_after(close_idx);
+                    continue;
+                }
+            }
+        } else if ch == '\\' && idx + 1 < chars.len() && !is_escaped_char(&chars, idx) {
+            let next = chars[idx + 1].1;
+            if next == '[' {
+                if let Some(close_idx) = find_closing_escaped(&chars, idx + 2, ']') {
+                    out.push_str(&reply[last_byte..byte_pos]);
+                    let content_start = byte_after(idx + 1);
+                    let content_end = chars[close_idx].0;
+                    let content = reply[content_start..content_end].trim();
+                    if !content.is_empty() {
+                        formulas.push(LatexFormula {
+                            source: content.to_string(),
+                            display: true,
+                        });
+                        out.push_str(&format!("【公式{}】", formulas.len()));
+                    } else {
+                        let after_close = byte_after(close_idx + 1);
+                        out.push_str(&reply[byte_pos..after_close]);
+                    }
+                    idx = close_idx + 2;
+                    last_byte = byte_after(close_idx + 1);
+                    continue;
+                }
+            } else if next == '(' && inline_count < inline_limit {
+                if let Some(close_idx) = find_closing_escaped(&chars, idx + 2, ')') {
+                    out.push_str(&reply[last_byte..byte_pos]);
+                    let content_start = byte_after(idx + 1);
+                    let content_end = chars[close_idx].0;
+                    let content = reply[content_start..content_end].trim();
+                    if !content.is_empty() {
+                        formulas.push(LatexFormula {
+                            source: content.to_string(),
+                            display: false,
+                        });
+                        inline_count += 1;
+                        out.push_str(&format!("【公式{}】", formulas.len()));
+                    } else {
+                        let after_close = byte_after(close_idx + 1);
+                        out.push_str(&reply[byte_pos..after_close]);
+                    }
+                    idx = close_idx + 2;
+                    last_byte = byte_after(close_idx + 1);
+                    continue;
+                }
+            }
+        }
+        idx += 1;
+    }
+    out.push_str(&reply[last_byte..]);
+    if formulas.is_empty() {
+        None
+    } else {
+        Some(LatexRenderResult {
+            text: out,
+            formulas,
+        })
+    }
+}
+
+fn is_escaped_char(chars: &[(usize, char)], idx: usize) -> bool {
+    if idx == 0 {
+        return false;
+    }
+    let mut count = 0;
+    let mut i = idx;
+    while i > 0 {
+        i -= 1;
+        if chars[i].1 == '\\' {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count % 2 == 1
+}
+
+fn find_closing_dollar_pair(chars: &[(usize, char)], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i + 1 < chars.len() {
+        if chars[i].1 == '$' && chars[i + 1].1 == '$' && !is_escaped_char(chars, i) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_closing_single_dollar(chars: &[(usize, char)], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i < chars.len() {
+        if chars[i].1 == '$' && !is_escaped_char(chars, i) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_closing_escaped(chars: &[(usize, char)], start: usize, closer: char) -> Option<usize> {
+    let mut i = start;
+    while i + 1 < chars.len() {
+        if chars[i].1 == '\\' && chars[i + 1].1 == closer {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn build_latex_url(cfg: &LatexRenderConfig, formula: &LatexFormula) -> Option<Url> {
+    let base = cfg.base_url.trim();
+    if base.is_empty() {
+        return None;
+    }
+    let mut tex = String::new();
+    if cfg.dpi > 0 {
+        tex.push_str(&format!("\\dpi{{{}}} ", cfg.dpi));
+    }
+    if formula.display {
+        tex.push_str("\\displaystyle ");
+    }
+    tex.push_str(formula.source.trim());
+    let encoded: String = byte_serialize(tex.as_bytes()).collect();
+    let url = if base.contains('?') {
+        format!("{}{}", base, encoded)
+    } else {
+        format!("{}?{}", base, encoded)
+    };
+    Url::parse(&url).ok()
+}
+
+async fn send_latex_rendered(
+    bot: &AutoSend<Bot>,
+    chat_id: ChatId,
+    rendered: LatexRenderResult,
+    cfg: &LatexRenderConfig,
+) -> HandlerResult {
+    if !rendered.text.trim().is_empty() {
+        let send = bot
+            .send_message(chat_id, rendered.text.clone())
+            .parse_mode(ParseMode::Html)
+            .await;
+        if send.is_err() {
+            let safe = escape_html(&rendered.text);
+            bot.send_message(chat_id, safe)
+                .parse_mode(ParseMode::Html)
+                .await?;
+        }
+    }
+    for (idx, formula) in rendered.formulas.iter().enumerate() {
+        let label = format!("公式{}", idx + 1);
+        let url = match build_latex_url(cfg, formula) {
+            Some(url) => url,
+            None => {
+                let fallback = format!("{}: {}", label, formula.source);
+                send_text(bot, chat_id, fallback).await?;
+                continue;
+            }
+        };
+        let send = bot
+            .send_photo(chat_id, InputFile::url(url))
+            .caption(label.clone())
+            .await;
+        if send.is_err() {
+            let fallback = format!("{}: {}", label, formula.source);
+            send_text(bot, chat_id, fallback).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn send_reply_with_progress(
     bot: &AutoSend<Bot>,
     chat_id: ChatId,
@@ -759,14 +1115,28 @@ async fn send_reply_with_progress(
     progress: Option<ProgressHandle>,
     message_id: Option<MessageId>,
     stream: bool,
+    latex_cfg: &LatexRenderConfig,
 ) -> HandlerResult {
     let markup = yes_no_markup(reply);
+    let mut latex_render = if markup.is_none() {
+        prepare_latex_render(reply, latex_cfg)
+    } else {
+        None
+    };
     if let Some(handle) = progress {
-        let ProgressHandle { stop, join, message_id } = handle;
+        let ProgressHandle {
+            stop,
+            join,
+            message_id,
+        } = handle;
         let _ = stop.send(());
         join.abort();
         let _ = time::timeout(Duration::from_millis(200), join).await;
         time::sleep(Duration::from_millis(40)).await;
+        if let Some(rendered) = latex_render.take() {
+            let _ = bot.delete_message(chat_id, message_id).await;
+            return send_latex_rendered(bot, chat_id, rendered, latex_cfg).await;
+        }
         let mut delivered = false;
         if stream && should_stream(reply) && markup.is_none() {
             delivered = stream_edit_message(bot, chat_id, message_id, reply).await;
@@ -799,6 +1169,12 @@ async fn send_reply_with_progress(
             let _ = bot.delete_message(chat_id, message_id).await;
         }
         return Ok(());
+    }
+    if let Some(rendered) = latex_render {
+        if let Some(message_id) = message_id {
+            let _ = bot.delete_message(chat_id, message_id).await;
+        }
+        return send_latex_rendered(bot, chat_id, rendered, latex_cfg).await;
     }
     if let Some(message_id) = message_id {
         let mut req = bot
@@ -1195,7 +1571,7 @@ async fn chat_with_llm(
     messages.push(LlmMessage {
         role: "system".into(),
         content: format!(
-            "Persona:\n{}\n\nRules:\n- Reply fast and directly.\n- Use only function tool calls when needed; never output manual tool instructions.\n- If you can check local state, do it via tools; don’t ask the user to run commands.\n- Don’t install dependencies unless explicitly asked; prefer built-in tools.\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For data queries, return a single best answer. If it’s unavailable, silently try the next best source/variant and only ask if all options fail.\n- For reminders, this bot can schedule and proactively send messages: use the built-in scheduler. Provide a concrete schedule format instead of saying it can't.\n- For real-time/web data, use search/http tools; if a tool fails, show the error and a concrete config fix.\n- Ask the minimum clarifying questions; keep context across turns.\n- Format for Telegram HTML (escape <, >, &; only supported tags).\n- Be concise.",
+            "Persona:\n{}\n\nRules:\n- Reply fast and directly.\n- Use only function tool calls when needed; never output manual tool instructions.\n- If you can check local state, do it via tools; don’t ask the user to run commands.\n- Don’t install dependencies unless explicitly asked; prefer built-in tools.\n- Avoid multiple-choice prompts; pick a reasonable default and proceed.\n- For data queries, return a single best answer. If it’s unavailable, silently try the next best source/variant and only ask if all options fail.\n- For reminders, this bot can schedule and proactively send messages: use the built-in scheduler. Provide a concrete schedule format instead of saying it can't.\n- For real-time/web data, use search/http tools; if a tool fails, show the error and a concrete config fix.\n- Ask the minimum clarifying questions; keep context across turns.\n- Format for Telegram HTML (escape <, >, &; only supported tags).\n- For math, use LaTeX delimiters ($...$, $$...$$).\n- Be concise.",
             state.persona
         ),
         tool_call_id: None,

@@ -63,3 +63,10 @@ dir = "skills"
 [network]
 # Optional proxy for Telegram/LLM/HTTP tools, e.g. "http://127.0.0.1:7890"
 proxy_url = ""
+
+[render.latex]
+enabled = true
+inline = true
+max_inline = 6
+base_url = "https://latex.codecogs.com/png.latex"
+dpi = 150

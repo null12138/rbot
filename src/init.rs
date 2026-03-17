@@ -1,5 +1,5 @@
 use crate::config::{
-    Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, SchedulerConfig,
+    Config, HttpToolConfig, LlmConfig, MemoryConfig, NetworkConfig, RenderConfig, SchedulerConfig,
     SearchToolConfig, SecurityConfig, ShellToolConfig, SkillsConfig, TelegramConfig, ToolsConfig,
     TmuxToolConfig,
 };
@@ -147,6 +147,7 @@ pub fn run() -> anyhow::Result<()> {
             heartbeat_interval_secs: heartbeat.parse().unwrap_or(60),
         },
         skills: SkillsConfig { dir: "skills".into() },
+        render: RenderConfig::default(),
         network: NetworkConfig::default(),
     };
 
